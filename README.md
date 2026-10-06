@@ -1,30 +1,32 @@
+[English](README.md) | [日本語](README.ja.md)
+
 # pdf2context
 
-複数の PDF を、一つのコーパスにまとめます。AI に渡すのは PDF と Markdown です。
+Turn multiple PDFs into one corpus. What you hand to an AI is the PDF and the Markdown.
 
-`-o` には、拡張子を除いた出力パスを渡します。`/hoge/context/merged` なら、同じディレクトリに次の3ファイルができます。
+Pass `-o` an output path without an extension. For `/hoge/context/merged`, the same directory gets these three files:
 
-- `/hoge/context/merged.pdf` — 結合した PDF。ページの見た目の正本です。
-- `/hoge/context/merged.md` — ページごとの出典付きテキスト。
-- `/hoge/context/merged.json` — 前回の出典を再利用するための記録です。出典、SHA-256、ページ本文が入ります。
+- `/hoge/context/merged.pdf` — the merged PDF. It is the authoritative copy of how the pages look.
+- `/hoge/context/merged.md` — text with a source citation on every page.
+- `/hoge/context/merged.json` — a record for reusing sources from the previous run. It stores the source, the SHA-256, and the page text.
 
-ページ見出しは、統合後のページ番号と、元ファイルのページ番号の両方を持ちます。本文はコードフェンスで囲みます。
+Each page heading carries both the page number in the merged file and the page number in the original file. The body is wrapped in a code fence.
 
 ```text
 ### contract.pdf — source p.4 — merged p.16
 ```
 
-## 必要なもの
+## Requirements
 
-PDF の結合とテキスト抽出には、次のコマンドが必要です。
+Merging PDFs and extracting text requires these commands:
 
 ```bash
 brew install qpdf poppler
 ```
 
-OCR は [OCRmyPDF](https://ocrmypdf.readthedocs.io/) が行います。パッケージは `uv run` が入れます。ページの画像化には、同時に入る `pypdfium2` を使うので、Ghostscript は不要です。
+OCR is performed by [OCRmyPDF](https://ocrmypdf.readthedocs.io/). `uv run` installs that package. Pages are rasterized with `pypdfium2`, which is installed alongside it, so Ghostscript is not required.
 
-OCR を使うときだけ、Tesseract 本体が必要です。`brew install tesseract` には英語の学習データが入っています。全言語パック `tesseract-lang` は不要です。日本語を読むときは `jpn.traineddata` だけ追加します。
+The Tesseract binary is required only when you use OCR. `brew install tesseract` includes the English trained data. The full language pack `tesseract-lang` is not required. To read Japanese, add only `jpn.traineddata`.
 
 ```bash
 brew install tesseract
@@ -32,9 +34,9 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
   -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
 ```
 
-## 使い方
+## Usage
 
-このリポジトリのルートで実行します。`uv run` がパッケージを仮想環境へ入れ、`pdf2context` コマンドとして起動します。
+Run this from the repository root. `uv run` installs the package into a virtual environment and starts it as the `pdf2context` command.
 
 ```bash
 uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
@@ -45,47 +47,47 @@ uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
 uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
 ```
 
-`/hoge/context/pdf_a` を指定した場合のファイル名は `pdf_a.pdf`、`pdf_a.md`、`pdf_a.json` です。末尾が `.pdf`、`.md`、`.json` のときは、その拡張子を外してから同じ規則を適用します。
+For `/hoge/context/pdf_a`, the file names are `pdf_a.pdf`, `pdf_a.md`, and `pdf_a.json`. If the path ends in `.pdf`, `.md`, or `.json`, that extension is stripped and the same rule applies.
 
-ディレクトリを渡すと、その直下の PDF をファイル名のコードポイント順で結合します。グロブは引数の順を保ち、一致したファイルはパス名の順です。`**/*.pdf` のように再帰もできます。`2.pdf` は `10.pdf` より後になります。順番を固定するときは `01_` のようにゼロ埋めするか、引数でファイルを直接並べてください。
+A directory argument merges the PDFs directly inside it, in code-point order of the file names. Globs keep the order of the arguments; matched files are ordered by path name. Recursive globs such as `**/*.pdf` work. `2.pdf` sorts after `10.pdf`. To fix the order, zero-pad names such as `01_`, or pass the files explicitly as arguments.
 
-同じ出典名でバイト列も同じファイルが複数回現れた場合は、2 回目以降を除きます。出典名が同じでバイト列が違うものが一度に複数あるときは、エラーにします。これから書く `.pdf`、`.md`、`.json` は入力から除きます。
+If the same source name appears more than once with the same bytes, later copies are dropped. If several inputs share a source name but differ in bytes, the run errors. The `.pdf`, `.md`, and `.json` about to be written are excluded from the input.
 
-再実行は `--update` で決まります。既定の `changed` は、出典名とバイト列と OCR の指定が前回と同じ出典を再利用し、バイト列が変わった出典だけ作り直します。`replace` は今回渡した出典を作り直します。`keep` は、既存の出典名を、バイト列が変わっていても前回のページのまま残します。入力に無い出典名は残します。`--prune` を付けると、それらを除きます。結果が前回と同じときは、`replace` 以外はファイルを書き換えません。
+Reruns follow `--update`. The default, `changed`, reuses a source whose source name, bytes, and OCR settings match the previous run, and rebuilds only sources whose bytes changed. `replace` rebuilds the sources passed this time. `keep` leaves an existing source name on its previous pages even when the bytes changed. Source names absent from the input stay. `--prune` drops them. When the result matches the previous run, files are not rewritten, except under `replace`.
 
-`--dry-run` はファイルを書きません。先に各出典名の結果を出し、続けて別名でバイト列が同じ組を出します。この同内容の一覧は `--prune` を適用する前の集合です。同内容があっても終了は成功です。本実行は同内容では止まりません。前回の JSON が無いときの `changed` と `keep`、入力が空のときは、本実行と同じエラーになります。
+`--dry-run` writes no files. It prints the outcome for each source name, then the pairs that have different names and the same bytes. That same-content list is the set before `--prune` is applied. The command still exits successfully when such pairs exist. A real run does not stop because of them. `changed` and `keep` with no previous JSON, and an empty input, fail the same way as a real run.
 
-シンボリックリンクやディレクトリは置き換えません。実行中は出力先に `.{名前}.pdf2context.lock` を置き、同時実行を拒みます。置き換えに失敗した場合は、以前の出力へ戻します。
+Symbolic links and directories are not replaced. During a run, `.{name}.pdf2context.lock` is placed at the output location, and a concurrent run is refused. If replacement fails, the previous output is restored.
 
-各外部コマンドの制限時間は `--timeout` 秒です。既定は 600 秒です。
+Each external command is limited to `--timeout` seconds. The default is 600.
 
 ## OCR
 
-`--ocr` は `off`、`auto`、`force` です。既定は `off` です。言語の既定値は `jpn+eng` です。
+`--ocr` is `off`, `auto`, or `force`. The default is `off`. The default language is `jpn+eng`.
 
-OCRmyPDF は、認識した文字を透明な文字層として PDF に書き戻します。見た目は元のページのまま、検索、コピー、その後の `pdftotext` がその文字を読めます。傾き補正はしません。出力は PDF/A に変換しません。OCR の後にページ数が変わっていれば中止します。
+OCRmyPDF writes the recognized characters back into the PDF as an invisible text layer. The page looks the same, while search, copy, and a later `pdftotext` can read those characters. Skew is not corrected. The output is not converted to PDF/A. If the page count changes after OCR, the run stops.
 
-- `auto` は、文字を1文字でも取り出せるページをそのままにし、文字のないページだけに文字層を足します。ページ番号だけのページや、見出しが1行ある画像も、ページ全体が対象外になります。
-- `force` は、既存の文字を捨てて全ページを OCR し直します。文字化けや、キャプションだけ文字がある画像に使います。ページ画像は作り直されます。
+- `auto` leaves any page from which at least one character can be extracted as it is, and adds a text layer only to pages with no characters. A page that is only a page number, or an image with a single heading line, is left out entirely.
+- `force` discards existing text and OCRs every page again. Use it for garbled text, or for an image whose only text is a caption. Page images are regenerated.
 
-## テキスト抽出
+## Text extraction
 
-各ページを `pdftotext -f N -l N -nopgbrk -layout` で抽出します。ファイル全体を改ページ文字で分割しません。`-layout` を外すときは `--no-layout` を指定します。
+Each page is extracted with `pdftotext -f N -l N -nopgbrk -layout`. The whole file is not split on form-feed characters. Pass `--no-layout` to drop `-layout`.
 
-JSON はコーパスの記録です。前回の JSON が無く、PDF か Markdown だけが残っているとき、`changed` と `keep` は止まります。作り直すときは `--update replace` を指定します。
+The JSON is the record of the corpus. When the previous JSON is missing and only the PDF or the Markdown remains, `changed` and `keep` stop. To rebuild, pass `--update replace`.
 
-## 出力しないもの
+## What this tool does not produce
 
-このツールは、表や見出しを Markdown の構造へ復元しません。OCR が拾うのは文字です。
+This tool does not restore tables or headings into Markdown structure. OCR recovers characters.
 
-暗号化された PDF は受け付けません。パスワードを外してから渡してください。
+Encrypted PDFs are rejected. Remove the password before passing the file.
 
-## 開発
+## Development
 
 ```bash
 uv run python -m unittest discover -s tests -v
 ```
 
-## ライセンス
+## License
 
 Apache License 2.0
