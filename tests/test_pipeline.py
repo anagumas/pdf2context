@@ -147,7 +147,7 @@ class ConvertTest(unittest.TestCase):
             corpus = convert(
                 [str(root)],
                 root / "merged",
-                overwrite=True,
+                update="replace",
                 log=lambda _message: None,
                 warn=lambda _message: None,
             )
@@ -163,17 +163,24 @@ class ConvertTest(unittest.TestCase):
             self.assertEqual([source.source_file for source in corpus.sources], ["a.pdf"])
             self.assertEqual(_page_count(root / "output" / "merged.pdf"), 1)
 
-    def test_second_run_requires_overwrite(self) -> None:
+    def test_identical_second_run_leaves_the_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pdf = root / "a.pdf"
             make_pdf(pdf, ["A"])
             output = root / "output"
-            _convert([str(pdf)], output)
-            with self.assertRaises(Pdf2ContextError) as raised:
-                _convert([str(pdf)], output)
-            self.assertIn("--overwrite", str(raised.exception))
-            _convert([str(pdf)], output, overwrite=True)
+            recorded = []
+
+            def runner(args, timeout):
+                recorded.append(list(args))
+                return default_runner(args, timeout)
+
+            _convert([str(pdf)], output, runner=runner)
+            before = (output / "merged.json").read_bytes()
+            recorded.clear()
+            _convert([str(pdf)], output, runner=runner)
+            self.assertEqual(before, (output / "merged.json").read_bytes())
+            self.assertFalse(any(Path(call[0]).name == "pdftotext" for call in recorded))
 
     def test_symlink_output_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -183,10 +190,12 @@ class ConvertTest(unittest.TestCase):
             make_pdf(pdf, ["A"])
             make_pdf(other, ["B"])
             output = root / "output"
-            output.mkdir()
+            _convert([str(pdf)], output)
+            (output / "merged.pdf").unlink()
             (output / "merged.pdf").symlink_to(other)
+            make_pdf(pdf, ["Changed"])
             with self.assertRaises(Pdf2ContextError) as raised:
-                _convert([str(pdf)], output, overwrite=True)
+                _convert([str(pdf)], output)
             self.assertIn("通常のファイル以外", str(raised.exception))
 
     def test_output_lock_is_respected(self) -> None:
@@ -207,19 +216,17 @@ class ConvertTest(unittest.TestCase):
             finally:
                 lock.unlink()
 
-    def test_same_basename_is_qualified(self) -> None:
+    def test_same_basename_with_different_bytes_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             make_pdf(root / "one" / "a.pdf", ["One"])
             make_pdf(root / "two" / "a.pdf", ["Two"])
-            corpus = _convert(
-                [str(root / "one" / "a.pdf"), str(root / "two" / "a.pdf")],
-                root / "output",
-            )
-            self.assertEqual(
-                [page.source_file for page in corpus.pages],
-                ["one/a.pdf", "two/a.pdf"],
-            )
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert(
+                    [str(root / "one" / "a.pdf"), str(root / "two" / "a.pdf")],
+                    root / "output",
+                )
+            self.assertIn("同じ出典名", str(raised.exception))
 
     def test_no_layout_omits_flag(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -236,21 +243,19 @@ class ConvertTest(unittest.TestCase):
             self.assertTrue(text_calls)
             self.assertTrue(all("-layout" not in call and "-nopgbrk" in call for call in text_calls))
 
-    def test_no_manifest_omits_json_until_an_old_one_exists(self) -> None:
+    def test_missing_json_stops_an_update(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             pdf = root / "a.pdf"
             make_pdf(pdf, ["A"])
-            output = root / "fresh"
-            _convert([str(pdf)], output, manifest=False)
-            self.assertTrue((output / "merged.md").is_file())
-            self.assertFalse((output / "merged.json").exists())
-
-            again = root / "again"
-            _convert([str(pdf)], again)
+            output = root / "output"
+            _convert([str(pdf)], output)
+            (output / "merged.json").unlink()
             with self.assertRaises(Pdf2ContextError) as raised:
-                _convert([str(pdf)], again, manifest=False, overwrite=True)
-            self.assertIn("merged.json", str(raised.exception))
+                _convert([str(pdf)], output)
+            self.assertIn("JSON", str(raised.exception))
+            _convert([str(pdf)], output, update="replace")
+            self.assertTrue((output / "merged.json").is_file())
 
     def test_missing_tesseract_language_stops_before_ocr(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -348,6 +353,133 @@ class ConvertTest(unittest.TestCase):
             self.assertIn("パスワード", str(raised.exception))
 
 
+    def test_omitted_source_stays_and_new_names_append(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A", "A2"])
+            make_pdf(root / "b.pdf", ["B"])
+            output = root / "output"
+            _convert([str(root / "a.pdf"), str(root / "b.pdf")], output)
+            make_pdf(root / "e.pdf", ["E"])
+            make_pdf(root / "c.pdf", ["C"])
+            recorded = []
+
+            def runner(args, timeout):
+                recorded.append(list(args))
+                return default_runner(args, timeout)
+
+            corpus = _convert(
+                [str(root / "e.pdf"), str(root / "a.pdf"), str(root / "c.pdf")],
+                output,
+                runner=runner,
+            )
+            self.assertEqual(
+                [source.source_file for source in corpus.sources],
+                ["a.pdf", "b.pdf", "e.pdf", "c.pdf"],
+            )
+            self.assertEqual(
+                [page.text for page in corpus.pages],
+                ["A", "A2", "B", "E", "C"],
+            )
+            text_calls = [call for call in recorded if Path(call[0]).name == "pdftotext"]
+            self.assertEqual(len(text_calls), 2)
+
+    def test_prune_drops_omitted_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A"])
+            make_pdf(root / "b.pdf", ["B"])
+            output = root / "output"
+            _convert([str(root / "a.pdf"), str(root / "b.pdf")], output)
+            corpus = _convert([str(root / "a.pdf")], output, prune=True)
+            self.assertEqual([source.source_file for source in corpus.sources], ["a.pdf"])
+            self.assertNotIn("B", (output / "merged.md").read_text(encoding="utf-8"))
+
+    def test_keep_retains_previous_pages_when_bytes_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pdf = root / "a.pdf"
+            make_pdf(pdf, ["A"])
+            output = root / "output"
+            _convert([str(pdf)], output)
+            make_pdf(pdf, ["AX"])
+            corpus = _convert([str(pdf)], output, update="keep")
+            self.assertEqual(corpus.pages[0].text, "A")
+            self.assertNotIn("AX", (output / "merged.md").read_text(encoding="utf-8"))
+
+    def test_changed_replaces_only_the_source_whose_bytes_differ(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pdf = root / "a.pdf"
+            make_pdf(pdf, ["A"])
+            make_pdf(root / "b.pdf", ["B"])
+            output = root / "output"
+            _convert([str(pdf), str(root / "b.pdf")], output)
+            make_pdf(pdf, ["AX"])
+            corpus = _convert([str(pdf)], output)
+            self.assertEqual([page.text for page in corpus.pages], ["AX", "B"])
+            self.assertEqual(corpus.pages[1].merged_page, 2)
+
+    def test_same_bytes_under_another_name_are_kept_and_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "a.pdf"
+            make_pdf(original, ["A"])
+            output = root / "output"
+            _convert([str(original)], output)
+            renamed = root / "b-final.pdf"
+            shutil.copyfile(original, renamed)
+            lines: list[str] = []
+            before = (output / "merged.json").read_bytes()
+            _convert(
+                [str(renamed)],
+                output,
+                dry_run=True,
+                report=lines.append,
+            )
+            self.assertEqual(before, (output / "merged.json").read_bytes())
+            self.assertIn("残留 a.pdf", lines)
+            self.assertIn("追加 b-final.pdf", lines)
+            self.assertIn("同内容: a.pdf, b-final.pdf", lines)
+            lines.clear()
+            _convert(
+                [str(renamed)],
+                output,
+                prune=True,
+                dry_run=True,
+                report=lines.append,
+            )
+            self.assertIn("除外 a.pdf", lines)
+            self.assertIn("同内容: a.pdf, b-final.pdf", lines)
+            corpus = _convert([str(renamed)], output)
+            self.assertEqual(
+                [source.source_file for source in corpus.sources],
+                ["a.pdf", "b-final.pdf"],
+            )
+
+    def test_replace_rewrites_an_identical_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pdf = root / "a.pdf"
+            make_pdf(pdf, ["A"])
+            output = root / "output"
+            _convert([str(pdf)], output)
+            before = json.loads((output / "merged.json").read_text(encoding="utf-8"))["created_at"]
+            _convert([str(pdf)], output, update="replace")
+            after = json.loads((output / "merged.json").read_text(encoding="utf-8"))["created_at"]
+            self.assertNotEqual(before, after)
+
+    def test_dry_run_writes_nothing_on_the_first_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A"])
+            output = root / "output"
+            lines: list[str] = []
+            _convert([str(root / "a.pdf")], output, dry_run=True, report=lines.append)
+            self.assertEqual(lines, ["追加 a.pdf"])
+            self.assertFalse(output.exists())
+
+
 class CommandTest(unittest.TestCase):
     def test_qpdf_exit_3_is_a_warning(self) -> None:
         def runner(args, timeout):
@@ -431,6 +563,45 @@ class CliTest(unittest.TestCase):
             self.assertTrue((output / "merged.json").is_file())
             self.assertIn("Hello", (output / "merged.md").read_text(encoding="utf-8"))
             self.assertFalse((output / ".merged.pdf2context.lock").exists())
+
+    def test_dry_run_prints_the_plan_and_keeps_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Hello"])
+            output = root / "out"
+            first = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pdf2context",
+                    str(root / "a.pdf"),
+                    "-o",
+                    str(output / "merged"),
+                ],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            preview = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pdf2context",
+                    "--dry-run",
+                    str(root / "a.pdf"),
+                    "-o",
+                    str(output / "merged"),
+                ],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(preview.returncode, 0, preview.stderr)
+            self.assertIn("再利用 a.pdf", preview.stdout)
+            self.assertNotIn("同内容:", preview.stdout)
 
 
 def _convert(inputs, output, **kwargs):
