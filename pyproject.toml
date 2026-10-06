@@ -1,0 +1,22 @@
+[project]
+name = "pdf2context"
+version = "0.1.0"
+description = "Turn multiple PDFs into a merged, AI-ready context with page-level source provenance."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "ocrmypdf>=17",
+    "pypdfium2>=4",
+]
+
+[project.scripts]
+pdf2context = "pdf2context.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
