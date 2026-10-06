@@ -45,6 +45,7 @@ uv run pdf2context docs/ -o output/merged
 uv run pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
 uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
 uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
+uv run pdf2context --lang ja docs/ -o output/merged
 ```
 
 For `/hoge/context/pdf_a`, the file names are `pdf_a.pdf`, `pdf_a.md`, and `pdf_a.json`. If the path ends in `.pdf`, `.md`, or `.json`, that extension is stripped and the same rule applies.
@@ -54,6 +55,12 @@ A directory argument merges the PDFs directly inside it, in code-point order of 
 If the same source name appears more than once with the same bytes, later copies are dropped. If several inputs share a source name but differ in bytes, the run errors. The `.pdf`, `.md`, and `.json` about to be written are excluded from the input.
 
 Reruns follow `--update`. The default, `changed`, reuses a source whose source name, bytes, and OCR settings match the previous run, and rebuilds only sources whose bytes changed. `replace` rebuilds the sources passed this time. `keep` leaves an existing source name on its previous pages even when the bytes changed. Source names absent from the input stay. `--prune` drops them. When the result matches the previous run, files are not rewritten, except under `replace`.
+
+`--lang` is `en` or `ja`. It selects the language of errors, help, and progress logs. The first run defaults to `en`. A later run, when `--lang` is omitted, uses `options.language` from the previous JSON. Passing `--lang` with a different value rewrites only that JSON field. The PDF and the Markdown stay as they are. `--dry-run` prints `language: ja -> en` when that field would change. Dry-run status names stay in English: `added`, `replaced`, `reused`, `kept`, `retained`, `pruned`, and `same-content`.
+
+The Markdown contains an English `## Notice` section. It does not follow `--lang`.
+
+A previous JSON without `options.language`, or with a value other than `en` or `ja`, is an error. The message names the line where `"language": "en"` or `"language": "ja"` goes, inside `options`. `--update replace` and `--dry-run` stop as well.
 
 `--dry-run` writes no files. It prints the outcome for each source name, then the pairs that have different names and the same bytes. That same-content list is the set before `--prune` is applied. The command still exits successfully when such pairs exist. A real run does not stop because of them. `changed` and `keep` with no previous JSON, and an empty input, fail the same way as a real run.
 
