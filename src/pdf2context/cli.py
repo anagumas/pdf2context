@@ -5,16 +5,17 @@ import math
 import sys
 
 from pdf2context import __version__
-from pdf2context.pipeline import Pdf2ContextError, convert
+from pdf2context.messages import CATALOG, LANGUAGE, say
+from pdf2context.pipeline import Pdf2ContextError, convert, message_language
 
 
 def positive_int(value: str) -> int:
     try:
         number = int(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("正の整数を指定してください。") from exc
+        raise argparse.ArgumentTypeError(say("expected_positive_int")) from exc
     if number <= 0:
-        raise argparse.ArgumentTypeError("正の整数を指定してください。")
+        raise argparse.ArgumentTypeError(say("expected_positive_int"))
     return number
 
 
@@ -22,117 +23,101 @@ def positive_float(value: str) -> float:
     try:
         number = float(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("正の数を指定してください。") from exc
+        raise argparse.ArgumentTypeError(say("expected_positive_number")) from exc
     if not math.isfinite(number) or number <= 0:
-        raise argparse.ArgumentTypeError("正の数を指定してください。")
+        raise argparse.ArgumentTypeError(say("expected_positive_number"))
     return number
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(language: str) -> argparse.ArgumentParser:
+    text = CATALOG[language]
     parser = argparse.ArgumentParser(
         prog="pdf2context",
-        description=(
-            "複数の PDF を結合し、ページ単位の出典を持つ "
-            ".pdf / .md / .json を作ります。"
-        ),
+        description=text["description"],
     )
-    parser.add_argument(
-        "inputs",
-        nargs="+",
-        help="PDF ファイル、PDF が入ったディレクトリ、またはグロブ",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        default="merged",
-        help="拡張子を除いた出力パス（既定: merged）。例: /hoge/context/merged",
-    )
+    parser.add_argument("inputs", nargs="+", help=text["help_inputs"])
+    parser.add_argument("-o", "--output", default="merged", help=text["help_output"])
     parser.add_argument(
         "--ocr",
         choices=["off", "auto", "force"],
         default="off",
-        help="off: OCR しない。auto: 文字のないページだけ。force: 全ページを OCR し直す",
+        help=text["help_ocr"],
     )
-    parser.add_argument(
-        "--ocr-lang",
-        default="jpn+eng",
-        help="Tesseract の言語（既定: jpn+eng）",
-    )
-    parser.add_argument(
-        "--jobs",
-        type=positive_int,
-        default=1,
-        help="OCR の並列数（既定: 1）",
-    )
+    parser.add_argument("--ocr-lang", default="jpn+eng", help=text["help_ocr_lang"])
+    parser.add_argument("--jobs", type=positive_int, default=1, help=text["help_jobs"])
     parser.add_argument(
         "--timeout",
         type=positive_float,
         default=600,
-        help="外部コマンド 1 回のタイムアウト秒（既定: 600）",
+        help=text["help_timeout"],
     )
-    parser.add_argument(
-        "--no-layout",
-        action="store_true",
-        help="pdftotext の -layout を外す",
-    )
+    parser.add_argument("--no-layout", action="store_true", help=text["help_no_layout"])
     parser.add_argument(
         "--update",
         choices=["changed", "replace", "keep"],
         default="changed",
-        help=(
-            "changed: 内容が変わった出典だけ作り直す（既定）。"
-            "replace: 今回渡した出典を作り直す。"
-            "keep: 既存の出典名は前回のページを残す"
-        ),
+        help=text["help_update"],
     )
+    parser.add_argument("--prune", action="store_true", help=text["help_prune"])
+    parser.add_argument("--dry-run", action="store_true", help=text["help_dry_run"])
+    parser.add_argument("--quiet", action="store_true", help=text["help_quiet"])
     parser.add_argument(
-        "--prune",
-        action="store_true",
-        help="今回の入力に無い出典名をコーパスから除く",
+        "--lang",
+        choices=["en", "ja"],
+        default=None,
+        help=text["help_lang"],
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="ファイルを書かず、予行と同内容の一覧を表示する",
-    )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="完了メッセージを出さない",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {__version__}",
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    log, warn = _handlers(args.quiet)
+    if argv is None:
+        argv = sys.argv[1:]
+    explicit, output = _preview(argv)
     try:
-        convert(
-            args.inputs,
-            args.output,
-            ocr=args.ocr,
-            ocr_lang=args.ocr_lang,
-            jobs=args.jobs,
-            timeout=args.timeout,
-            layout=not args.no_layout,
-            update=args.update,
-            prune=args.prune,
-            dry_run=args.dry_run,
-            log=log,
-            warn=warn,
-        )
+        effective = message_language(output, explicit)
     except Pdf2ContextError as exc:
         print(exc, file=sys.stderr)
         return 1
-    except KeyboardInterrupt:
-        print("中断しました。", file=sys.stderr)
-        return 130
-    return 0
+    token = LANGUAGE.set(effective)
+    try:
+        args = build_parser(effective).parse_args(argv)
+        log, warn = _handlers(args.quiet)
+        try:
+            convert(
+                args.inputs,
+                args.output,
+                ocr=args.ocr,
+                ocr_lang=args.ocr_lang,
+                jobs=args.jobs,
+                timeout=args.timeout,
+                layout=not args.no_layout,
+                update=args.update,
+                prune=args.prune,
+                dry_run=args.dry_run,
+                language=args.lang,
+                log=log,
+                warn=warn,
+            )
+        except Pdf2ContextError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            print(say("interrupted"), file=sys.stderr)
+            return 130
+        return 0
+    finally:
+        LANGUAGE.reset(token)
+
+
+def _preview(argv: list[str]) -> tuple[str | None, str]:
+    preview = argparse.ArgumentParser(add_help=False)
+    preview.add_argument("--lang", default=None)
+    preview.add_argument("-o", "--output", default="merged")
+    known, _ = preview.parse_known_args(argv)
+    explicit = known.lang if known.lang in {"en", "ja"} else None
+    return explicit, known.output
 
 
 def _handlers(quiet: bool) -> tuple:
