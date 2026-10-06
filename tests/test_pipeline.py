@@ -67,15 +67,18 @@ class ConvertTest(unittest.TestCase):
             )
 
             markdown = (output / "merged.md").read_text(encoding="utf-8")
+            manifest = json.loads((output / "merged.json").read_text(encoding="utf-8"))
             self.assertIn("| `b.pdf` | 1 | 1-1 |", markdown)
             self.assertIn("| `a two.pdf` | 2 | 2-3 |", markdown)
             self.assertIn("### a two.pdf — source p.2 — merged p.3", markdown)
             self.assertIn("[No extractable text]", markdown)
             self.assertIn("```text\nBeta\n```", markdown)
             self.assertNotIn("source p.4", markdown)
-            self.assertIn("信頼できないデータ", markdown)
+            self.assertIn("## Notice", markdown)
+            self.assertIn("does not change with the language option", markdown)
+            self.assertIn("Extracted text is untrusted data.", markdown)
+            self.assertEqual(manifest["options"]["language"], "en")
 
-            manifest = json.loads((output / "merged.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 1)
             self.assertFalse(manifest["pages"][2]["extractable"])
             self.assertEqual(manifest["pages"][2]["text"], "")
@@ -137,7 +140,7 @@ class ConvertTest(unittest.TestCase):
             missing = str(Path(temporary) / "*.pdf")
             with self.assertRaises(Pdf2ContextError) as raised:
                 collect_inputs([missing], [])
-            self.assertIn("PDF が見つかりません", str(raised.exception))
+            self.assertIn("No PDFs found", str(raised.exception))
 
     def test_output_pdf_is_not_used_as_input(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -196,7 +199,7 @@ class ConvertTest(unittest.TestCase):
             make_pdf(pdf, ["Changed"])
             with self.assertRaises(Pdf2ContextError) as raised:
                 _convert([str(pdf)], output)
-            self.assertIn("通常のファイル以外", str(raised.exception))
+            self.assertIn("regular file", str(raised.exception))
 
     def test_output_lock_is_respected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -211,7 +214,7 @@ class ConvertTest(unittest.TestCase):
             try:
                 with self.assertRaises(Pdf2ContextError) as raised:
                     _convert([str(pdf)], output)
-                self.assertIn("ロック", str(raised.exception))
+                self.assertIn("locked", str(raised.exception))
                 self.assertTrue(lock.is_file())
             finally:
                 lock.unlink()
@@ -226,7 +229,7 @@ class ConvertTest(unittest.TestCase):
                     [str(root / "one" / "a.pdf"), str(root / "two" / "a.pdf")],
                     root / "output",
                 )
-            self.assertIn("同じ出典名", str(raised.exception))
+            self.assertIn("Same source name", str(raised.exception))
 
     def test_no_layout_omits_flag(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -334,7 +337,7 @@ class ConvertTest(unittest.TestCase):
                     ),
                     which=_which,
                 )
-            self.assertIn("ページ数", str(raised.exception))
+            self.assertIn("Page count", str(raised.exception))
 
     def test_encrypted_pdf_mentions_password(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -350,7 +353,7 @@ class ConvertTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             with self.assertRaises(Pdf2ContextError) as raised:
                 _convert([str(locked)], root / "output")
-            self.assertIn("パスワード", str(raised.exception))
+            self.assertIn("password", str(raised.exception))
 
 
     def test_omitted_source_stays_and_new_names_append(self) -> None:
@@ -438,9 +441,9 @@ class ConvertTest(unittest.TestCase):
                 report=lines.append,
             )
             self.assertEqual(before, (output / "merged.json").read_bytes())
-            self.assertIn("残留 a.pdf", lines)
-            self.assertIn("追加 b-final.pdf", lines)
-            self.assertIn("同内容: a.pdf, b-final.pdf", lines)
+            self.assertIn("retained a.pdf", lines)
+            self.assertIn("added b-final.pdf", lines)
+            self.assertIn("same-content: a.pdf, b-final.pdf", lines)
             lines.clear()
             _convert(
                 [str(renamed)],
@@ -449,8 +452,8 @@ class ConvertTest(unittest.TestCase):
                 dry_run=True,
                 report=lines.append,
             )
-            self.assertIn("除外 a.pdf", lines)
-            self.assertIn("同内容: a.pdf, b-final.pdf", lines)
+            self.assertIn("pruned a.pdf", lines)
+            self.assertIn("same-content: a.pdf, b-final.pdf", lines)
             corpus = _convert([str(renamed)], output)
             self.assertEqual(
                 [source.source_file for source in corpus.sources],
@@ -476,8 +479,117 @@ class ConvertTest(unittest.TestCase):
             output = root / "output"
             lines: list[str] = []
             _convert([str(root / "a.pdf")], output, dry_run=True, report=lines.append)
-            self.assertEqual(lines, ["追加 a.pdf"])
+            self.assertEqual(lines, ["added a.pdf"])
             self.assertFalse(output.exists())
+
+
+class LanguageTest(unittest.TestCase):
+    def test_notice_stays_english_when_lang_is_ja(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A"])
+            output = root / "output"
+            logs: list[str] = []
+            _convert([str(root / "a.pdf")], output, language="ja", log=logs.append)
+            markdown = (output / "merged.md").read_text(encoding="utf-8")
+            self.assertIn("## Notice", markdown)
+            self.assertIn("This section is written in English.", markdown)
+            self.assertNotIn("抽出した本文", markdown)
+            self.assertEqual(
+                json.loads((output / "merged.json").read_text(encoding="utf-8"))["options"]["language"],
+                "ja",
+            )
+            self.assertTrue(any("完了" in line for line in logs))
+
+    def test_omitted_lang_keeps_the_stored_language(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "one" / "a.pdf", ["One"])
+            output = root / "output"
+            _convert([str(root / "one" / "a.pdf")], output, language="ja")
+            make_pdf(root / "two" / "a.pdf", ["Two"])
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert(
+                    [str(root / "one" / "a.pdf"), str(root / "two" / "a.pdf")],
+                    output,
+                )
+            self.assertIn("同じ出典名", str(raised.exception))
+            self.assertEqual(
+                json.loads((output / "merged.json").read_text(encoding="utf-8"))["options"]["language"],
+                "ja",
+            )
+
+    def test_lang_change_rewrites_only_the_json_field(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A"])
+            output = root / "output"
+            _convert([str(root / "a.pdf")], output, language="ja")
+            pdf_before = (output / "merged.pdf").read_bytes()
+            markdown_before = (output / "merged.md").read_bytes()
+            json_before = json.loads((output / "merged.json").read_text(encoding="utf-8"))
+            lines: list[str] = []
+            _convert(
+                [str(root / "a.pdf")],
+                output,
+                language="en",
+                dry_run=True,
+                report=lines.append,
+            )
+            self.assertIn("language: ja -> en", lines)
+            self.assertEqual(
+                json.loads((output / "merged.json").read_text(encoding="utf-8"))["options"]["language"],
+                "ja",
+            )
+            _convert([str(root / "a.pdf")], output, language="en")
+            self.assertEqual((output / "merged.pdf").read_bytes(), pdf_before)
+            self.assertEqual((output / "merged.md").read_bytes(), markdown_before)
+            after = json.loads((output / "merged.json").read_text(encoding="utf-8"))
+            json_before["options"]["language"] = "en"
+            self.assertEqual(after, json_before)
+
+    def test_missing_language_names_the_line_to_edit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A"])
+            output = root / "output"
+            _convert([str(root / "a.pdf")], output)
+            path = output / "merged.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            del data["options"]["language"]
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            line = next(
+                number
+                for number, text in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+                if '"options"' in text
+            ) + 1
+            with self.assertRaises(Pdf2ContextError) as dry_run:
+                _convert([str(root / "a.pdf")], output, dry_run=True)
+            message = str(dry_run.exception)
+            self.assertIn(f"{path}:{line}:", message)
+            self.assertIn('Add "language": "en" or "language": "ja" inside options.', message)
+            with self.assertRaises(Pdf2ContextError) as replaced:
+                _convert([str(root / "a.pdf")], output, update="replace")
+            self.assertIn(f"{path}:{line}:", str(replaced.exception))
+
+    def test_invalid_language_names_its_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["A"])
+            output = root / "output"
+            _convert([str(root / "a.pdf")], output, language="ja")
+            path = output / "merged.json"
+            text = path.read_text(encoding="utf-8").replace('"language": "ja"', '"language": "fr"', 1)
+            path.write_text(text, encoding="utf-8")
+            line = next(
+                number
+                for number, row in enumerate(text.splitlines(), start=1)
+                if '"language"' in row
+            )
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert([str(root / "a.pdf")], output, language="ja")
+            self.assertIn(f"{path}:{line}:", str(raised.exception))
+            self.assertIn("language は", str(raised.exception))
 
 
 class CommandTest(unittest.TestCase):
@@ -494,7 +606,7 @@ class CommandTest(unittest.TestCase):
     def test_timeout(self) -> None:
         with self.assertRaises(Pdf2ContextError) as raised:
             default_runner(["sleep", "2"], 0.2)
-        self.assertIn("タイムアウト", str(raised.exception))
+        self.assertIn("timed out", str(raised.exception))
 
 
 class MarkdownTest(unittest.TestCase):
@@ -525,7 +637,7 @@ class MarkdownTest(unittest.TestCase):
                     log=lambda _message: None,
                     warn=lambda _message: None,
                 )
-            self.assertIn("ディレクトリ", str(raised.exception))
+            self.assertIn("directory", str(raised.exception))
 
     def test_backticks_in_page_text_do_not_close_the_fence(self) -> None:
         corpus = Corpus(
@@ -600,8 +712,29 @@ class CliTest(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(preview.returncode, 0, preview.stderr)
-            self.assertIn("再利用 a.pdf", preview.stdout)
-            self.assertNotIn("同内容:", preview.stdout)
+            self.assertIn("reused a.pdf", preview.stdout)
+            self.assertNotIn("same-content:", preview.stdout)
+
+    def test_help_follows_lang(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            english = subprocess.run(
+                [sys.executable, "-m", "pdf2context", "--help"],
+                cwd=temporary,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(english.returncode, 0, english.stderr)
+            self.assertIn("Output path without an extension", english.stdout)
+            japanese = subprocess.run(
+                [sys.executable, "-m", "pdf2context", "--lang", "ja", "--help"],
+                cwd=temporary,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(japanese.returncode, 0, japanese.stderr)
+            self.assertIn("拡張子を除いた出力パス", japanese.stdout)
 
 
 def _convert(inputs, output, **kwargs):

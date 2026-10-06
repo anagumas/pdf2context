@@ -45,6 +45,7 @@ uv run pdf2context docs/ -o output/merged
 uv run pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
 uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
 uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
+uv run pdf2context --lang ja docs/ -o output/merged
 ```
 
 `/hoge/context/pdf_a` を指定した場合のファイル名は `pdf_a.pdf`、`pdf_a.md`、`pdf_a.json` です。末尾が `.pdf`、`.md`、`.json` のときは、その拡張子を外してから同じ規則を適用します。
@@ -54,6 +55,12 @@ uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
 同じ出典名でバイト列も同じファイルが複数回現れた場合は、2 回目以降を除きます。出典名が同じでバイト列が違うものが一度に複数あるときは、エラーにします。これから書く `.pdf`、`.md`、`.json` は入力から除きます。
 
 再実行は `--update` で決まります。既定の `changed` は、出典名とバイト列と OCR の指定が前回と同じ出典を再利用し、バイト列が変わった出典だけ作り直します。`replace` は今回渡した出典を作り直します。`keep` は、既存の出典名を、バイト列が変わっていても前回のページのまま残します。入力に無い出典名は残します。`--prune` を付けると、それらを除きます。結果が前回と同じときは、`replace` 以外はファイルを書き換えません。
+
+`--lang` は `en` または `ja` です。エラー、ヘルプ、進捗ログの言語を選びます。初回の既定は `en` です。続きで `--lang` を省略したときは、前回の JSON の `options.language` を使います。`--lang` を付けて前回と違う値にしたときは、その JSON の項目だけを書き換えます。PDF と Markdown はそのままです。`--dry-run` は、その項目が変わるとき `language: ja -> en` と出します。予行の状態名は英語のままです。`added`、`replaced`、`reused`、`kept`、`retained`、`pruned`、`same-content` です。
+
+Markdown には英文の `## Notice` セクションがあります。`--lang` では変わりません。
+
+前回の JSON に `options.language` が無いとき、または値が `en` と `ja` のどちらでもないときは、エラーです。メッセージは、`options` の中で `"language": "en"` または `"language": "ja"` を書く行を示します。`--update replace` と `--dry-run` も止まります。
 
 `--dry-run` はファイルを書きません。先に各出典名の結果を出し、続けて別名でバイト列が同じ組を出します。この同内容の一覧は `--prune` を適用する前の集合です。同内容があっても終了は成功です。本実行は同内容では止まりません。前回の JSON が無いときの `changed` と `keep`、入力が空のときは、本実行と同じエラーになります。
 
