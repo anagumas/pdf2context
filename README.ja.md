@@ -36,16 +36,16 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
 
 ## 使い方
 
-このリポジトリのルートで実行します。`uv run` がパッケージを仮想環境へ入れ、`pdf2context` コマンドとして起動します。
+[uv](https://docs.astral.sh/uv/) を入れると、このリポジトリをクローンせずに公開パッケージを実行できます。`qpdf` と `pdftotext` は、「必要なもの」のとおり別途インストールします。
 
 ```bash
-uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
-uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/pdf_a
-uv run pdf2context docs/ -o output/merged
-uv run pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
-uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
-uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
-uv run pdf2context --lang ja docs/ -o output/merged
+uvx pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
+uvx pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/pdf_a
+uvx pdf2context docs/ -o output/merged
+uvx pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
+uvx pdf2context --ocr force --update replace shots/*.pdf -o output/merged
+uvx pdf2context --dry-run --prune shots/*.pdf -o output/merged
+uvx pdf2context --lang ja docs/ -o output/merged
 ```
 
 `/hoge/context/pdf_a` を指定した場合のファイル名は `pdf_a.pdf`、`pdf_a.md`、`pdf_a.json` です。末尾が `.pdf`、`.md`、`.json` のときは、その拡張子を外してから同じ規則を適用します。
@@ -94,6 +94,8 @@ JSON はコーパスの記録です。前回の JSON が無く、PDF か Markdow
 ```bash
 uv run python -m unittest discover -s tests -v
 ```
+
+このリポジトリのクローンでは、`uv run pdf2context` が手元のコードを起動します。
 
 ## ライセンス
 

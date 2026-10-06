@@ -11,6 +11,11 @@ dependencies = [
     "pypdfium2>=4",
 ]
 
+[project.urls]
+Homepage = "https://github.com/anagumas/pdf2context"
+Repository = "https://github.com/anagumas/pdf2context"
+Issues = "https://github.com/anagumas/pdf2context/issues"
+
 [project.scripts]
 pdf2context = "pdf2context.cli:main"
 
