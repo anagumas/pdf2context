@@ -76,14 +76,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="pdftotext の -layout を外す",
     )
     parser.add_argument(
-        "--no-json",
-        action="store_true",
-        help="JSON を書かない。出典は Markdown に残る",
+        "--update",
+        choices=["changed", "replace", "keep"],
+        default="changed",
+        help=(
+            "changed: 内容が変わった出典だけ作り直す（既定）。"
+            "replace: 今回渡した出典を作り直す。"
+            "keep: 既存の出典名は前回のページを残す"
+        ),
     )
     parser.add_argument(
-        "--overwrite",
+        "--prune",
         action="store_true",
-        help="既存の通常ファイルの出力を置き換える",
+        help="今回の入力に無い出典名をコーパスから除く",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="ファイルを書かず、予行と同内容の一覧を表示する",
     )
     parser.add_argument(
         "--quiet",
@@ -110,8 +120,9 @@ def main(argv: list[str] | None = None) -> int:
             jobs=args.jobs,
             timeout=args.timeout,
             layout=not args.no_layout,
-            manifest=not args.no_json,
-            overwrite=args.overwrite,
+            update=args.update,
+            prune=args.prune,
+            dry_run=args.dry_run,
             log=log,
             warn=warn,
         )
