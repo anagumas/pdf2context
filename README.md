@@ -10,6 +10,8 @@ Pass `-o` an output path without an extension. For `/hoge/context/merged`, the s
 - `/hoge/context/merged.md` — text with a source citation on every page.
 - `/hoge/context/merged.json` — a record for reusing sources from the previous run. It stores the source, the SHA-256, and the page text.
 
+Hand `merged.pdf` and `merged.md` to the AI. `merged.json` is for this tool. Do not hand it to the AI.
+
 Each page heading carries both the page number in the merged file and the page number in the original file. The body is wrapped in a code fence.
 
 ```text
@@ -36,7 +38,7 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
 
 ## Usage
 
-Run this from the repository root. `uv run` installs the package into a virtual environment and starts it as the `pdf2context` command.
+Run this from the repository root. `uv run` installs the package into a virtual environment and starts it as the `pdf2context` command. `qpdf` and `pdftotext` still have to be on `PATH`, as described in Requirements. Without a clone, `uvx pdf2context` runs the package via PyPI.
 
 ```bash
 uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
