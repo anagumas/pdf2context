@@ -10,6 +10,8 @@ Pass `-o` an output path without an extension. For `/hoge/context/merged`, the s
 - `/hoge/context/merged.md` — text with a source citation on every page.
 - `/hoge/context/merged.json` — a record for reusing sources from the previous run. It stores the source, the SHA-256, and the page text.
 
+Hand `merged.pdf` and `merged.md` to the AI. `merged.json` is for this tool. Do not hand it to the AI.
+
 Each page heading carries both the page number in the merged file and the page number in the original file. The body is wrapped in a code fence.
 
 ```text
@@ -36,16 +38,16 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
 
 ## Usage
 
-Install [uv](https://docs.astral.sh/uv/), then run the published package without cloning this repository. `qpdf` and `pdftotext` still have to be on `PATH`, as described in Requirements.
+Run this from the repository root. `uv run` installs the package into a virtual environment and starts it as the `pdf2context` command. `qpdf` and `pdftotext` still have to be on `PATH`, as described in Requirements. Without a clone, `uvx pdf2context` runs the package via PyPI.
 
 ```bash
-uvx pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
-uvx pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/pdf_a
-uvx pdf2context docs/ -o output/merged
-uvx pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
-uvx pdf2context --ocr force --update replace shots/*.pdf -o output/merged
-uvx pdf2context --dry-run --prune shots/*.pdf -o output/merged
-uvx pdf2context --lang ja docs/ -o output/merged
+uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
+uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/pdf_a
+uv run pdf2context docs/ -o output/merged
+uv run pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
+uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
+uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
+uv run pdf2context --lang ja docs/ -o output/merged
 ```
 
 For `/hoge/context/pdf_a`, the file names are `pdf_a.pdf`, `pdf_a.md`, and `pdf_a.json`. If the path ends in `.pdf`, `.md`, or `.json`, that extension is stripped and the same rule applies.
@@ -94,8 +96,6 @@ Encrypted PDFs are rejected. Remove the password before passing the file.
 ```bash
 uv run python -m unittest discover -s tests -v
 ```
-
-In a clone of this repository, `uv run pdf2context` runs the local code.
 
 ## License
 
