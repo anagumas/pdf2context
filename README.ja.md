@@ -10,6 +10,8 @@
 - `/hoge/context/merged.md` — ページごとの出典付きテキスト。
 - `/hoge/context/merged.json` — 前回の出典を再利用するための記録です。出典、SHA-256、ページ本文が入ります。
 
+AI に渡すのは `merged.pdf` と `merged.md` です。`merged.json` はこのツールのためのファイルです。AI には渡しません。
+
 ページ見出しは、統合後のページ番号と、元ファイルのページ番号の両方を持ちます。本文はコードフェンスで囲みます。
 
 ```text
@@ -36,7 +38,7 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
 
 ## 使い方
 
-このリポジトリのルートで実行します。`uv run` がパッケージを仮想環境へ入れ、`pdf2context` コマンドとして起動します。
+このリポジトリのルートで実行します。`uv run` がパッケージを仮想環境へ入れ、`pdf2context` コマンドとして起動します。`qpdf` と `pdftotext` は、「必要なもの」のとおり `PATH` に通しておきます。クローンしないときは、`uvx pdf2context` が PyPI 経由でパッケージを実行します。
 
 ```bash
 uv run pdf2context '/hoge/pdf_a/*.pdf' -o /hoge/context/merged
