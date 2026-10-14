@@ -26,15 +26,37 @@ PDF の結合とテキスト抽出には、次のコマンドが必要です。
 brew install qpdf poppler
 ```
 
-OCR は [OCRmyPDF](https://ocrmypdf.readthedocs.io/) が行います。パッケージは `uv run` が入れます。ページの画像化には、同時に入る `pypdfium2` を使うので、Ghostscript は不要です。
+認識レベル 1 は [OCRmyPDF](https://ocrmypdf.readthedocs.io/) が行います。パッケージは `uv run` が入れます。ページの画像化には、同時に入る `pypdfium2` を使うので、Ghostscript は不要です。
 
-OCR を使うときだけ、Tesseract 本体が必要です。`brew install tesseract` には英語の学習データが入っています。全言語パック `tesseract-lang` は不要です。日本語を読むときは `jpn.traineddata` だけ追加します。
+Tesseract が要るのは認識レベル 1 だけです。`brew install tesseract` には英語の学習データが入っています。全言語パック `tesseract-lang` は不要です。日本語を読むときは `jpn.traineddata` だけ追加します。
 
 ```bash
 brew install tesseract
 curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
   -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
 ```
+
+認識レベル 2 と 3 には、[PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 以降と、[Noto Sans CJK](https://github.com/notofonts/noto-cjk) が要ります。このパッケージはそれらを入れません。`paddleocr` が `PATH` にある必要があります。フォントは同梱しません。ヒラギノは使いません。PaddlePaddle の推論エンジンはその案内に従って入れ、そのあと PaddleOCR を入れます。
+
+```bash
+pip install "paddleocr>=3.7.0"
+```
+
+Noto Sans CJK は SIL Open Font License 1.1 です。PDF に書いた字形は埋め込んでかまいません。フォントは手元にインストールします。
+
+macOS:
+
+```bash
+brew install --cask font-noto-sans-cjk
+```
+
+Debian と Ubuntu:
+
+```bash
+sudo apt install fonts-noto-cjk
+```
+
+Windows: [Noto CJK のリリース](https://github.com/notofonts/noto-cjk/releases) から `NotoSansCJKjp-Regular.otf` を、現在のユーザー向けにインストールします。
 
 ## 使い方
 
@@ -80,10 +102,28 @@ Markdown には英文の `## Notice` セクションがあります。`--lang` �
 
 `--ocr` は `off`、`auto`、`force` です。既定は `off` です。言語の既定値は `jpn+eng` です。
 
-OCRmyPDF は、認識した文字を透明な文字層として PDF に書き戻します。見た目は元のページのまま、検索、コピー、その後の `pdftotext` がその文字を読めます。傾き補正はしません。出力は PDF/A に変換しません。OCR の後にページ数が変わっていれば中止します。
+`--ocr-level` は `1`、`2`、`3` です。既定は `1` です。
+
+- `1` は OCRmyPDF と Tesseract です。`--jobs` は OCRmyPDF のワーカー数です。
+- `2` は PP-OCRv6 small です。PaddleOCR 3.7.0 以降を使います。
+- `3` は PP-OCRv6 medium です。同じ PaddleOCR を使います。
+
+レベル 1 は、認識した文字を透明な文字層として PDF に書き戻します。見た目は元のページのまま、検索、コピー、その後の `pdftotext` がその文字を読めます。傾き補正はしません。出力は PDF/A に変換しません。OCR の後にページ数が変わっていれば中止します。`force` はページ画像を作り直します。
+
+レベル 2 と 3 は、PaddleOCR が返した文字と矩形を、元のページ画像の上に書きます。ページ画像は描き直しません。傾き補正はしません。PaddleOCR に渡す画像は 300 dpi で作ります。文書の回転と歪み補正はオフなので、矩形はその画像の上に残ります。認識するページごとに `paddleocr ocr` を1回、1ページずつ実行します。`--jobs` では変わりません。`--timeout` はそのコマンド1回の制限です。既定は 600 秒です。PaddleOCR は GPU があればそれを使い、無ければ CPU を使います。デバイスを別に指定するオプションはありません。
+
+レベル 2 と 3 で埋め込むフォントは、インストール済みの Noto Sans CJK です。ページで使った字形だけを埋めます。ヒラギノは使いません。`paddleocr` か Noto Sans CJK が無いとき、または認識が失敗したときは、実行を止め、前回のコーパスを残します。レベル 1 には落としません。文字が返らなかったページは、空の文字層のままです。
+
+`--ocr off` は `--ocr-level` を見ません。
 
 - `auto` は、文字を1文字でも取り出せるページをそのままにし、文字のないページだけに文字層を足します。ページ番号だけのページや、見出しが1行ある画像も、ページ全体が対象外になります。
-- `force` は、既存の文字を捨てて全ページを OCR し直します。文字化けや、キャプションだけ文字がある画像に使います。ページ画像は作り直されます。
+- `force` は、既存の文字を捨てて全ページを OCR し直します。文字化けや、キャプションだけ文字がある画像に使います。
+
+レベル 2 と 3 の `--ocr-lang` は `jpn` と `eng` だけです。順序は問いません。`eng+jpn` は `jpn+eng` と同じです。それ以外の言語は、認識の前に止まります。
+
+`--ocr-level` を変えると、その出典は作り直します。認識レベルの無い以前の JSON はレベル 1 です。
+
+`--dry-run` は、レベル 2 と 3 では `paddleocr` と Noto Sans CJK があることだけを確認し、認識は走らせません。`--max-pdf-size` のとき、これらのレベルは新しい文字層を足す前の PDF の大きさで判定します。
 
 ## テキスト抽出
 

@@ -10,6 +10,12 @@ from pdf2context.messages import CATALOG, LANGUAGE, say
 from pdf2context.pipeline import Pdf2ContextError, convert, message_language
 
 
+def recognition_level(value: str) -> int:
+    if value not in {"1", "2", "3"}:
+        raise argparse.ArgumentTypeError(say("ocr_level"))
+    return int(value)
+
+
 def positive_int(value: str) -> int:
     try:
         number = int(value)
@@ -77,6 +83,12 @@ def build_parser(language: str) -> argparse.ArgumentParser:
         help=text["help_ocr"],
     )
     parser.add_argument("--ocr-lang", default="jpn+eng", help=text["help_ocr_lang"])
+    parser.add_argument(
+        "--ocr-level",
+        type=recognition_level,
+        default=1,
+        help=text["help_ocr_level"],
+    )
     parser.add_argument("--jobs", type=positive_int, default=1, help=text["help_jobs"])
     parser.add_argument(
         "--timeout",
@@ -129,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 ocr=args.ocr,
                 ocr_lang=args.ocr_lang,
+                ocr_level=args.ocr_level,
                 jobs=args.jobs,
                 timeout=args.timeout,
                 layout=not args.no_layout,
