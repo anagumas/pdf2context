@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import sys
 
 from pdf2context import __version__
@@ -17,6 +18,38 @@ def positive_int(value: str) -> int:
     if number <= 0:
         raise argparse.ArgumentTypeError(say("expected_positive_int"))
     return number
+
+
+_PDF_SIZE_UNITS = {
+    "": 1,
+    "b": 1,
+    "k": 1000,
+    "kb": 1000,
+    "ki": 1024,
+    "kib": 1024,
+    "m": 1_000_000,
+    "mb": 1_000_000,
+    "mi": 1024**2,
+    "mib": 1024**2,
+    "g": 1_000_000_000,
+    "gb": 1_000_000_000,
+    "gi": 1024**3,
+    "gib": 1024**3,
+}
+
+
+def pdf_size(value: str) -> int:
+    match = re.fullmatch(r"(\d+)\s*([a-z]*)", value.strip().lower())
+    if match is None:
+        raise argparse.ArgumentTypeError(say("expected_pdf_size"))
+    number = int(match.group(1))
+    unit = match.group(2)
+    if number <= 0 or unit not in _PDF_SIZE_UNITS:
+        raise argparse.ArgumentTypeError(say("expected_pdf_size"))
+    size = number * _PDF_SIZE_UNITS[unit]
+    if size <= 0:
+        raise argparse.ArgumentTypeError(say("expected_pdf_size"))
+    return size
 
 
 def positive_float(value: str) -> float:
@@ -50,6 +83,12 @@ def build_parser(language: str) -> argparse.ArgumentParser:
         type=positive_float,
         default=600,
         help=text["help_timeout"],
+    )
+    parser.add_argument(
+        "--max-pdf-size",
+        type=pdf_size,
+        default=None,
+        help=text["help_max_pdf_size"],
     )
     parser.add_argument("--no-layout", action="store_true", help=text["help_no_layout"])
     parser.add_argument(
@@ -97,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                 prune=args.prune,
                 dry_run=args.dry_run,
                 language=args.lang,
+                max_pdf_bytes=args.max_pdf_size,
                 log=log,
                 warn=warn,
             )

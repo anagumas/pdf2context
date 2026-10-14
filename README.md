@@ -48,17 +48,21 @@ uv run pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
 uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
 uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
 uv run pdf2context --lang ja docs/ -o output/merged
+uv run pdf2context '{A,B}*.pdf' -o output/merged
+uv run pdf2context --max-pdf-size 32MB docs/ -o output/merged
 ```
 
 For `/hoge/context/pdf_a`, the file names are `pdf_a.pdf`, `pdf_a.md`, and `pdf_a.json`. If the path ends in `.pdf`, `.md`, or `.json`, that extension is stripped and the same rule applies.
 
 A directory argument merges the PDFs directly inside it, in code-point order of the file names. Globs keep the order of the arguments; matched files are ordered by path name. Recursive globs such as `**/*.pdf` work. `2.pdf` sorts after `10.pdf`. To fix the order, zero-pad names such as `01_`, or pass the files explicitly as arguments.
 
+Shell-style braces expand before the glob. Quote the argument so the shell leaves the braces intact. `{A,B}*.pdf` becomes `A*.pdf` and `B*.pdf`. Alternatives stay in the written order, and matches inside each alternative are ordered by path name. An alternative that matches nothing is skipped. The argument is an error only when every alternative matches nothing. A group without a comma, such as `{ABC}`, stays literal. This is brace expansion, not a regular expression.
+
 If the same source name appears more than once with the same bytes, later copies are dropped. If several inputs share a source name but differ in bytes, the run errors. The `.pdf`, `.md`, and `.json` about to be written are excluded from the input.
 
 Reruns follow `--update`. The default, `changed`, reuses a source whose source name, bytes, and OCR settings match the previous run, and rebuilds only sources whose bytes changed. `replace` rebuilds the sources passed this time. `keep` leaves an existing source name on its previous pages even when the bytes changed. Source names absent from the input stay. `--prune` drops them. When the result matches the previous run, files are not rewritten, except under `replace`.
 
-`--lang` is `en` or `ja`. It selects the language of errors, help, and progress logs. The first run defaults to `en`. A later run, when `--lang` is omitted, uses `options.language` from the previous JSON. Passing `--lang` with a different value rewrites only that JSON field. The PDF and the Markdown stay as they are. `--dry-run` prints `language: ja -> en` when that field would change. Dry-run status names stay in English: `added`, `replaced`, `reused`, `kept`, `retained`, `pruned`, and `same-content`.
+`--lang` is `en` or `ja`. It selects the language of errors, help, and progress logs. The first run defaults to `en`. A later run, when `--lang` is omitted, uses `options.language` from the previous JSON. Passing `--lang` with a different value rewrites only that JSON field. The PDF and the Markdown stay as they are. `--dry-run` prints `language: ja -> en` when that field would change. Dry-run status names stay in English: `added`, `replaced`, `reused`, `kept`, `retained`, `pruned`, `capped`, and `same-content`.
 
 The Markdown contains an English `## Notice` section. It does not follow `--lang`.
 
@@ -69,6 +73,8 @@ A previous JSON without `options.language`, or with a value other than `en` or `
 Symbolic links and directories are not replaced. During a run, `.{name}.pdf2context.lock` is placed at the output location, and a concurrent run is refused. If replacement fails, the previous output is restored.
 
 Each external command is limited to `--timeout` seconds. The default is 600.
+
+`--max-pdf-size` caps the merged PDF. Pass a byte count, or a number with a unit such as `32MB` (decimal) or `20MiB` (binary). Sources are added whole, in merge order. Retained, reused, and kept pages count toward the size. The size is the merged PDF after OCR. The first source that would make the PDF larger than the cap, and every source after it, is capped: it is left out of the PDF, the Markdown, and the JSON. A warning names each capped source. If no source fits, the run stops and the previous corpus stays as it is. Without this option there is no cap. `--dry-run` applies the same rule, prints `capped`, and writes no files.
 
 ## OCR
 

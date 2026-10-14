@@ -48,17 +48,21 @@ uv run pdf2context --ocr auto --ocr-lang jpn+eng shots/*.pdf -o output/merged
 uv run pdf2context --ocr force --update replace shots/*.pdf -o output/merged
 uv run pdf2context --dry-run --prune shots/*.pdf -o output/merged
 uv run pdf2context --lang ja docs/ -o output/merged
+uv run pdf2context '{A,B}*.pdf' -o output/merged
+uv run pdf2context --max-pdf-size 32MB docs/ -o output/merged
 ```
 
 `/hoge/context/pdf_a` を指定した場合のファイル名は `pdf_a.pdf`、`pdf_a.md`、`pdf_a.json` です。末尾が `.pdf`、`.md`、`.json` のときは、その拡張子を外してから同じ規則を適用します。
 
 ディレクトリを渡すと、その直下の PDF をファイル名のコードポイント順で結合します。グロブは引数の順を保ち、一致したファイルはパス名の順です。`**/*.pdf` のように再帰もできます。`2.pdf` は `10.pdf` より後になります。順番を固定するときは `01_` のようにゼロ埋めするか、引数でファイルを直接並べてください。
 
+シェルと同じ波括弧を、グロブの前に展開します。シェルに先に展開されないよう、引数は引用符で囲みます。`{A,B}*.pdf` は `A*.pdf` と `B*.pdf` になります。選択肢は書いた順のままで、各選択肢の一致はパス名の順です。一致が無い選択肢は飛ばします。すべての選択肢が一致しないときだけ、その引数はエラーです。カンマの無い `{ABC}` はそのままの文字です。これは正規表現ではなく、波括弧の展開です。
+
 同じ出典名でバイト列も同じファイルが複数回現れた場合は、2 回目以降を除きます。出典名が同じでバイト列が違うものが一度に複数あるときは、エラーにします。これから書く `.pdf`、`.md`、`.json` は入力から除きます。
 
 再実行は `--update` で決まります。既定の `changed` は、出典名とバイト列と OCR の指定が前回と同じ出典を再利用し、バイト列が変わった出典だけ作り直します。`replace` は今回渡した出典を作り直します。`keep` は、既存の出典名を、バイト列が変わっていても前回のページのまま残します。入力に無い出典名は残します。`--prune` を付けると、それらを除きます。結果が前回と同じときは、`replace` 以外はファイルを書き換えません。
 
-`--lang` は `en` または `ja` です。エラー、ヘルプ、進捗ログの言語を選びます。初回の既定は `en` です。続きで `--lang` を省略したときは、前回の JSON の `options.language` を使います。`--lang` を付けて前回と違う値にしたときは、その JSON の項目だけを書き換えます。PDF と Markdown はそのままです。`--dry-run` は、その項目が変わるとき `language: ja -> en` と出します。予行の状態名は英語のままです。`added`、`replaced`、`reused`、`kept`、`retained`、`pruned`、`same-content` です。
+`--lang` は `en` または `ja` です。エラー、ヘルプ、進捗ログの言語を選びます。初回の既定は `en` です。続きで `--lang` を省略したときは、前回の JSON の `options.language` を使います。`--lang` を付けて前回と違う値にしたときは、その JSON の項目だけを書き換えます。PDF と Markdown はそのままです。`--dry-run` は、その項目が変わるとき `language: ja -> en` と出します。予行の状態名は英語のままです。`added`、`replaced`、`reused`、`kept`、`retained`、`pruned`、`capped`、`same-content` です。
 
 Markdown には英文の `## Notice` セクションがあります。`--lang` では変わりません。
 
@@ -69,6 +73,8 @@ Markdown には英文の `## Notice` セクションがあります。`--lang` �
 シンボリックリンクやディレクトリは置き換えません。実行中は出力先に `.{名前}.pdf2context.lock` を置き、同時実行を拒みます。置き換えに失敗した場合は、以前の出力へ戻します。
 
 各外部コマンドの制限時間は `--timeout` 秒です。既定は 600 秒です。
+
+`--max-pdf-size` は、結合した PDF の最大サイズです。バイト数、または `32MB`（10進）や `20MiB`（2進）のように単位を付けて指定します。出典は結合順に、ファイルごと足します。残留、再利用、維持のページもサイズに数えます。大きさは、OCR のあとで結合した PDF のバイト数です。足すと上限を超える出典と、その後ろの出典は見送りです。PDF、Markdown、JSON のどれにも入りません。見送りは警告します。1件も収まらないときはエラーになり、前回のコーパスは残ります。このオプションが無いときは上限はありません。`--dry-run` も同じ判定をし、見送りは `capped` と出します。ファイルは書きません。
 
 ## OCR
 
