@@ -16,6 +16,11 @@ from typing import Callable, Optional, Sequence
 
 from pdf2context import __version__
 from pdf2context.messages import LANGUAGE, say
+from pdf2context.textlayer import (
+    find_noto_sans_cjk,
+    level_languages_allowed,
+    write_recognition_layer,
+)
 
 NO_TEXT = "[No extractable text]"
 ADDED = "added"
@@ -209,6 +214,7 @@ def convert(
     *,
     ocr: str = "off",
     ocr_lang: str = "jpn+eng",
+    ocr_level: int = 1,
     jobs: int = 1,
     timeout: float = 600,
     layout: bool = True,
@@ -219,6 +225,7 @@ def convert(
     max_pdf_bytes: Optional[int] = None,
     runner: Runner = default_runner,
     which: Which = shutil.which,
+    find_font: Callable[[], Optional[Path]] = find_noto_sans_cjk,
     log: Log = _log_stderr,
     warn: Optional[Log] = None,
     report: Log = _report_stdout,
@@ -240,6 +247,7 @@ def convert(
             output,
             ocr=ocr,
             ocr_lang=ocr_lang,
+            ocr_level=ocr_level,
             jobs=jobs,
             timeout=timeout,
             layout=layout,
@@ -250,6 +258,7 @@ def convert(
             max_pdf_bytes=max_pdf_bytes,
             runner=runner,
             which=which,
+            find_font=find_font,
             log=log,
             warn=warn,
             report=report,
@@ -264,6 +273,7 @@ def _convert(
     *,
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
     jobs: int,
     timeout: float,
     layout: bool,
@@ -274,16 +284,22 @@ def _convert(
     max_pdf_bytes: Optional[int],
     runner: Runner,
     which: Which,
+    find_font: Callable[[], Optional[Path]],
     log: Log,
     warn: Optional[Log],
     report: Log,
 ) -> Corpus:
     if ocr not in {"off", "auto", "force"}:
         raise Pdf2ContextError(say("ocr_mode"))
+    if ocr_level not in {1, 2, 3}:
+        raise Pdf2ContextError(say("ocr_level"))
     if update not in {"changed", "replace", "keep"}:
         raise Pdf2ContextError(say("update_mode"))
     if ocr != "off" and not ocr_lang.strip():
         raise Pdf2ContextError(say("ocr_lang_empty"))
+    level = 1 if ocr == "off" else ocr_level
+    if level >= 2 and not level_languages_allowed(ocr_lang):
+        raise Pdf2ContextError(say("ocr_level_lang"))
     if jobs < 1:
         raise Pdf2ContextError(say("jobs"))
     if timeout <= 0:
@@ -309,11 +325,18 @@ def _convert(
         log,
     )
     required = ["qpdf", "pdftotext"]
-    if ocr != "off":
+    font: Optional[Path] = None
+    if level == 1 and ocr != "off":
         required.extend(["ocrmypdf", "tesseract"])
+    elif level >= 2:
+        required.append("paddleocr")
     tools = resolve_tools(required, which)
-    if ocr != "off":
+    if level == 1 and ocr != "off":
         ensure_tesseract_languages(tools["tesseract"], ocr_lang, timeout, runner)
+    if level >= 2:
+        font = find_font()
+        if font is None:
+            raise Pdf2ContextError(say("missing_noto"))
     sources = collapse_sources(paths, log)
     previous_sources = index_previous(previous) if previous is not None else []
     previous_options = previous.get("options") if previous is not None else None
@@ -324,6 +347,7 @@ def _convert(
         prune=prune,
         ocr=ocr,
         ocr_lang=ocr_lang,
+        ocr_level=level,
         previous_options=previous_options,
     )
     if dry_run:
@@ -332,8 +356,10 @@ def _convert(
             tools,
             max_pdf_bytes=max_pdf_bytes,
             previous_pdf=layout_paths.pdf if previous is not None else None,
-            ocr=ocr,
+            ocr="off" if level >= 2 else ocr,
             ocr_lang=ocr_lang,
+            ocr_level=level,
+            font=font,
             jobs=jobs,
             timeout=timeout,
             layout=layout,
@@ -369,6 +395,8 @@ def _convert(
         previous_pdf=layout_paths.pdf if previous is not None else None,
         ocr=ocr,
         ocr_lang=ocr_lang,
+        ocr_level=level,
+        font=font,
         jobs=jobs,
         timeout=timeout,
         layout=layout,
@@ -602,6 +630,7 @@ def build_plan(
     prune: bool,
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
     previous_options: Optional[dict],
 ) -> list[PlanItem]:
     incoming = {item.name: item for item in inputs}
@@ -624,6 +653,7 @@ def build_plan(
                 update=update,
                 ocr=ocr,
                 ocr_lang=ocr_lang,
+                ocr_level=ocr_level,
                 previous_options=previous_options,
             )
         )
@@ -641,10 +671,11 @@ def _status_for_match(
     update: str,
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
     previous_options: Optional[dict],
 ) -> PlanItem:
     hash_match = previous.get("sha256") == current.digest
-    ocr_match = _ocr_matches(previous_options, ocr, ocr_lang)
+    ocr_match = _ocr_matches(previous_options, ocr, ocr_lang, ocr_level)
     if update == "replace" or (hash_match and not ocr_match):
         status = REPLACED
     elif hash_match and ocr_match:
@@ -657,10 +688,20 @@ def _status_for_match(
     return PlanItem(current.name, status, current.path, digest, previous)
 
 
-def _ocr_matches(previous_options: Optional[dict], ocr: str, ocr_lang: str) -> bool:
+def _ocr_matches(
+    previous_options: Optional[dict],
+    ocr: str,
+    ocr_lang: str,
+    ocr_level: int,
+) -> bool:
     if not previous_options:
         return False
-    return previous_options.get("ocr") == ocr and previous_options.get("ocr_language") == ocr_lang
+    stored_level = previous_options.get("ocr_level", 1)
+    return (
+        previous_options.get("ocr") == ocr
+        and previous_options.get("ocr_language") == ocr_lang
+        and stored_level == ocr_level
+    )
 
 
 def _layout_matches(previous_options: Optional[dict], layout: bool) -> bool:
@@ -716,6 +757,8 @@ def _plan_within_cap(
     previous_pdf: Optional[Path],
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
+    font: Optional[Path],
     jobs: int,
     timeout: float,
     layout: bool,
@@ -736,6 +779,8 @@ def _plan_within_cap(
             pdf_name="preview.pdf",
             ocr=ocr,
             ocr_lang=ocr_lang,
+            ocr_level=ocr_level,
+            font=font,
             jobs=jobs,
             timeout=timeout,
             layout=layout,
@@ -840,6 +885,8 @@ def _publish_plan(
     previous_pdf: Optional[Path],
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
+    font: Optional[Path],
     jobs: int,
     timeout: float,
     layout: bool,
@@ -894,6 +941,8 @@ def _publish_plan(
                 pdf_name=layout_paths.pdf_name,
                 ocr=ocr,
                 ocr_lang=ocr_lang,
+                ocr_level=ocr_level,
+                font=font,
                 jobs=jobs,
                 timeout=timeout,
                 layout=layout,
@@ -935,6 +984,7 @@ def _publish_plan(
                     options={
                         "ocr": ocr,
                         "ocr_language": ocr_lang,
+                        "ocr_level": ocr_level,
                         "layout": layout,
                         "jobs": jobs,
                         "language": language,
@@ -1014,6 +1064,8 @@ def assemble_corpus(
     pdf_name: str,
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
+    font: Optional[Path],
     jobs: int,
     timeout: float,
     layout: bool,
@@ -1040,6 +1092,8 @@ def assemble_corpus(
             previous_pdf=previous_pdf,
             ocr=ocr,
             ocr_lang=ocr_lang,
+            ocr_level=ocr_level,
+            font=font,
             jobs=jobs,
             timeout=timeout,
             layout=layout,
@@ -1124,6 +1178,8 @@ def _materialize_source(
     previous_pdf: Optional[Path],
     ocr: str,
     ocr_lang: str,
+    ocr_level: int,
+    font: Optional[Path],
     jobs: int,
     timeout: float,
     layout: bool,
@@ -1137,7 +1193,34 @@ def _materialize_source(
         copy_stable(item.path, snapshot)
         count = show_npages(snapshot, tools["qpdf"], timeout, runner, warn)
         prepared = snapshot
-        if ocr != "off":
+        if ocr != "off" and ocr_level >= 2:
+            assert font is not None
+            prepared = workspace / f"ocr-{index}.pdf"
+            write_recognition_layer(
+                snapshot,
+                prepared,
+                mode=ocr,
+                level=ocr_level,
+                paddle=tools["paddleocr"],
+                font=font,
+                timeout=timeout,
+                runner=runner,
+                warn=warn,
+                page_text=lambda path, page: extract_page(
+                    tools["pdftotext"],
+                    path,
+                    page,
+                    layout,
+                    timeout,
+                    runner,
+                    warn,
+                ),
+            )
+            ocr_count = show_npages(prepared, tools["qpdf"], timeout, runner, warn)
+            if ocr_count != count:
+                raise Pdf2ContextError(say("ocr_page_count", path=item.path))
+            snapshot.unlink()
+        elif ocr != "off":
             prepared = workspace / f"ocr-{index}.pdf"
             mode = "--skip-text" if ocr == "auto" else "--force-ocr"
             execute(

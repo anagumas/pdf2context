@@ -652,12 +652,14 @@ name = "pdf2context"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fonttools" },
     { name = "ocrmypdf" },
     { name = "pypdfium2" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fonttools", specifier = ">=4.66.1" },
     { name = "ocrmypdf", specifier = ">=17" },
     { name = "pypdfium2", specifier = ">=4" },
 ]

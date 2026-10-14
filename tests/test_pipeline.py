@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pdf2context.textlayer import find_noto_sans_cjk
 from pdf2context.pipeline import (
     CommandResult,
     Corpus,
@@ -1049,6 +1050,269 @@ class CliTest(unittest.TestCase):
             self.assertNotIn("b.pdf", markdown)
 
 
+    def test_readmes_share_recognition_facts(self) -> None:
+        english = (ROOT / "README.md").read_text(encoding="utf-8")
+        japanese = (ROOT / "README.ja.md").read_text(encoding="utf-8")
+        for token in (
+            'pip install "paddleocr>=3.7.0"',
+            "brew install --cask font-noto-sans-cjk",
+            "sudo apt install fonts-noto-cjk",
+            "https://github.com/notofonts/noto-cjk/releases",
+            "https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html",
+            "NotoSansCJKjp-Regular.otf",
+            "--ocr-level",
+            "PP-OCRv6 small",
+            "PP-OCRv6 medium",
+            "300 dpi",
+            "jpn+eng",
+            "eng+jpn",
+        ):
+            self.assertIn(token, english)
+            self.assertIn(token, japanese)
+
+    def test_recognition_level_rejects_unknown_values_and_other_languages(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", [None])
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert([str(root / "a.pdf")], root / "out", ocr_level=4)
+            self.assertIn("1", str(raised.exception))
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert(
+                    [str(root / "a.pdf")],
+                    root / "out",
+                    ocr="auto",
+                    ocr_level=2,
+                    ocr_lang="jpn+fra",
+                    which=_paddle_which,
+                    find_font=lambda: root / "missing.otf",
+                )
+            self.assertIn("jpn", str(raised.exception))
+
+    def test_level_two_requires_paddle_and_noto_before_recognition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", [None])
+
+            def which(name):
+                if name == "paddleocr":
+                    return None
+                return shutil.which(name)
+
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert(
+                    [str(root / "a.pdf")],
+                    root / "out",
+                    ocr="auto",
+                    ocr_level=2,
+                    which=which,
+                    find_font=lambda: None,
+                )
+            self.assertIn("paddleocr", str(raised.exception))
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert(
+                    [str(root / "a.pdf")],
+                    root / "out",
+                    ocr="auto",
+                    ocr_level=2,
+                    which=_paddle_which,
+                    find_font=lambda: None,
+                    dry_run=True,
+                )
+            self.assertIn("Noto Sans CJK", str(raised.exception))
+
+    def test_off_ignores_recognition_level(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Kept"])
+
+            def which(name):
+                if name == "paddleocr":
+                    raise AssertionError(name)
+                return shutil.which(name)
+
+            _convert(
+                [str(root / "a.pdf")],
+                root / "out",
+                ocr="off",
+                ocr_level=3,
+                which=which,
+            )
+            manifest = json.loads((root / "out" / "merged.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["options"]["ocr_level"], 1)
+
+    def test_level_two_auto_skips_text_and_reads_blank_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            font = _test_font(root / "font.ttf")
+            make_pdf(root / "text.pdf", ["Already"])
+            make_pdf(root / "blank.pdf", [None])
+            recorded = []
+            text_corpus = _convert(
+                [str(root / "text.pdf")],
+                root / "text-out",
+                ocr="auto",
+                ocr_level=2,
+                jobs=4,
+                runner=_paddle_runner(recorded, ["ignored"]),
+                which=_paddle_which,
+                find_font=lambda: font,
+            )
+            self.assertEqual(recorded, [])
+            self.assertEqual(text_corpus.pages[0].text, "Already")
+            recorded.clear()
+            blank = _convert(
+                [str(root / "blank.pdf")],
+                root / "blank-out",
+                ocr="auto",
+                ocr_level=2,
+                ocr_lang="eng+jpn",
+                jobs=4,
+                runner=_paddle_runner(recorded, ["日Hi"]),
+                which=_paddle_which,
+                find_font=lambda: font,
+            )
+            self.assertEqual(blank.pages[0].text, "日Hi")
+            self.assertEqual(len(recorded), 1)
+            self.assertIn("PP-OCRv6_small_det", recorded[0])
+            self.assertIn("PP-OCRv6_small_rec", recorded[0])
+            self.assertIn("False", recorded[0])
+            self.assertNotIn("4", recorded[0])
+            self.assertNotIn("--deskew", recorded[0])
+            manifest = json.loads((root / "blank-out" / "merged.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["options"]["ocr_level"], 2)
+
+    def test_level_three_force_replaces_existing_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            font = _test_font(root / "font.ttf")
+            make_pdf(root / "shot.pdf", ["Already"])
+            recorded = []
+            corpus = _convert(
+                [str(root / "shot.pdf")],
+                root / "out",
+                ocr="force",
+                ocr_level=3,
+                runner=_paddle_runner(recorded, ["日Hi"]),
+                which=_paddle_which,
+                find_font=lambda: font,
+            )
+            self.assertEqual(corpus.pages[0].text, "日Hi")
+            self.assertNotIn("Already", corpus.pages[0].text)
+            self.assertIn("PP-OCRv6_medium_det", recorded[0])
+            self.assertIn("PP-OCRv6_medium_rec", recorded[0])
+
+    def test_paddle_failure_stops_and_keeps_the_previous_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            font = _test_font(root / "font.ttf")
+            make_pdf(root / "a.pdf", ["Safe"])
+            output = root / "out"
+            _convert([str(root / "a.pdf")], output)
+            make_pdf(root / "b.pdf", [None])
+
+            def runner(args, timeout):
+                if Path(args[0]).name == "paddleocr":
+                    return CommandResult(1, "", "boom")
+                return default_runner(args, timeout)
+
+            with self.assertRaises(Pdf2ContextError):
+                _convert(
+                    [str(root / "a.pdf"), str(root / "b.pdf")],
+                    output,
+                    ocr="auto",
+                    ocr_level=2,
+                    runner=runner,
+                    which=_paddle_which,
+                    find_font=lambda: font,
+                )
+            self.assertIn("Safe", _pdftotext(output / "merged.pdf"))
+
+    def test_missing_level_in_old_json_matches_level_one(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", [None])
+            output = root / "out"
+            recorded = []
+            _convert(
+                [str(root / "a.pdf")],
+                output,
+                ocr="auto",
+                runner=_ocr_runner(recorded, lambda source, destination: shutil.copyfile(source, destination)),
+                which=_which,
+            )
+            self.assertEqual(len(recorded), 1)
+            manifest_path = output / "merged.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            del manifest["options"]["ocr_level"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            recorded.clear()
+            _convert(
+                [str(root / "a.pdf")],
+                output,
+                ocr="auto",
+                runner=_ocr_runner(recorded, lambda source, destination: shutil.copyfile(source, destination)),
+                which=_which,
+            )
+            self.assertEqual(recorded, [])
+
+    def test_changing_level_rebuilds_the_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            font = _test_font(root / "font.ttf")
+            make_pdf(root / "a.pdf", [None])
+            output = root / "out"
+            _convert(
+                [str(root / "a.pdf")],
+                output,
+                ocr="auto",
+                runner=_ocr_runner([], lambda source, destination: shutil.copyfile(source, destination)),
+                which=_which,
+            )
+            recorded = []
+            corpus = _convert(
+                [str(root / "a.pdf")],
+                output,
+                ocr="auto",
+                ocr_level=2,
+                runner=_paddle_runner(recorded, ["日Hi"]),
+                which=_paddle_which,
+                find_font=lambda: font,
+            )
+            self.assertEqual(len(recorded), 1)
+            self.assertEqual(corpus.pages[0].text, "日Hi")
+
+    def test_dry_run_level_two_does_not_run_paddle_even_with_a_size_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            font = _test_font(root / "font.ttf")
+            make_pdf(root / "a.pdf", [None])
+            recorded = []
+            _convert(
+                [str(root / "a.pdf")],
+                root / "out",
+                ocr="auto",
+                ocr_level=2,
+                dry_run=True,
+                max_pdf_bytes=10_000_000,
+                runner=_paddle_runner(recorded, ["日Hi"]),
+                which=_paddle_which,
+                find_font=lambda: font,
+                report=lambda _message: None,
+            )
+            self.assertEqual(recorded, [])
+
+    def test_noto_search_prefers_japanese_regular(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Hiragino.ttc").write_bytes(b"no")
+            (root / "NotoSansJP-Regular.otf").write_bytes(b"no")
+            (root / "NotoSansCJK-Bold.otf").write_bytes(b"no")
+            chosen = root / "NotoSansCJKjp-Regular.otf"
+            chosen.write_bytes(b"yes")
+            self.assertEqual(find_noto_sans_cjk([root]), chosen)
+
+
 def _convert(inputs, output, **kwargs):
     kwargs.setdefault("log", lambda _message: None)
     kwargs.setdefault("warn", lambda _message: None)
@@ -1059,6 +1323,60 @@ def _which(name):
     if name == "ocrmypdf":
         return "/usr/bin/ocrmypdf"
     return shutil.which(name)
+
+
+def _test_font(path: Path) -> Path:
+    from fontTools.fontBuilder import FontBuilder
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+    pen = TTGlyphPen(None)
+    pen.moveTo((50, 0))
+    pen.lineTo((400, 0))
+    pen.lineTo((400, 600))
+    pen.lineTo((50, 600))
+    pen.closePath()
+    glyph = pen.glyph()
+    order = [".notdef", "H", "i", "uni65E5"]
+    glyphs = {name: glyph for name in order}
+    builder = FontBuilder(1000, isTTF=True)
+    builder.setupGlyphOrder(order)
+    builder.setupCharacterMap({ord("H"): "H", ord("i"): "i", 0x65E5: "uni65E5"})
+    builder.setupGlyf(glyphs)
+    builder.setupHorizontalMetrics({name: (600, 50) for name in glyphs})
+    builder.setupHorizontalHeader(ascent=800, descent=-200)
+    builder.setupNameTable({"familyName": "TestOCR", "styleName": "Regular"})
+    builder.setupOS2()
+    builder.setupPost()
+    builder.save(path)
+    return path
+
+
+def _paddle_which(name):
+    if name == "paddleocr":
+        return "/usr/bin/paddleocr"
+    return shutil.which(name)
+
+
+def _paddle_runner(recorded, texts):
+    def runner(args, timeout):
+        command = list(args)
+        if Path(command[0]).name == "paddleocr":
+            recorded.append(command)
+            save = Path(command[command.index("--save_path") + 1])
+            save.mkdir(parents=True, exist_ok=True)
+            (save / "page_res.json").write_text(
+                json.dumps(
+                    {
+                        "rec_texts": texts,
+                        "rec_boxes": [[10, 20, 200, 80] for _text in texts],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return CommandResult(0, "", "")
+        return default_runner(command, timeout)
+
+    return runner
 
 
 def _ocr_runner(recorded, write_output):

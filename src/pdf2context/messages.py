@@ -17,6 +17,16 @@ CATALOG: dict[str, dict[str, str]] = {
         "encrypted_hint": "Remove the password from encrypted PDFs before passing them.",
         "tool_failed": "{tool} failed (exit code {returncode}).\n{detail}{hint}",
         "ocr_mode": "OCR mode must be off, auto, or force.",
+        "ocr_level": "Recognition level must be 1, 2, or 3.",
+        "ocr_level_lang": (
+            "Recognition levels 2 and 3 accept only jpn and eng. Example: jpn+eng"
+        ),
+        "missing_noto": (
+            "Noto Sans CJK is not installed.\n"
+            "Install NotoSansCJKjp-Regular.otf. The README has the commands."
+        ),
+        "paddle_result": "Could not read the PaddleOCR result.\n{detail}",
+        "font_embed_failed": "Could not embed the text layer from {path}.",
         "update_mode": "Update mode must be changed, replace, or keep.",
         "ocr_lang_empty": "OCR language is empty. Example: jpn+eng",
         "jobs": "OCR jobs must be at least 1.",
@@ -77,7 +87,8 @@ CATALOG: dict[str, dict[str, str]] = {
             "Output path without an extension (default: merged). Example: /hoge/context/merged"
         ),
         "help_ocr": "off: no OCR. auto: pages with no characters. force: OCR every page again",
-        "help_ocr_lang": "Tesseract languages (default: jpn+eng)",
+        "help_ocr_lang": "OCR languages (default: jpn+eng). Levels 2 and 3 accept only jpn and eng",
+        "help_ocr_level": "1: Tesseract (default). 2: PP-OCRv6 small. 3: PP-OCRv6 medium",
         "help_jobs": "OCR worker count (default: 1)",
         "help_timeout": "Timeout in seconds for each external command (default: 600)",
         "help_max_pdf_size": (
@@ -108,6 +119,16 @@ CATALOG: dict[str, dict[str, str]] = {
         "encrypted_hint": "暗号化された PDF は、パスワードを外してから渡してください。",
         "tool_failed": "{tool} が失敗しました（終了コード {returncode}）。\n{detail}{hint}",
         "ocr_mode": "OCR モードは off、auto、force のいずれかです。",
+        "ocr_level": "認識レベルは 1、2、3 のいずれかです。",
+        "ocr_level_lang": (
+            "認識レベル 2 と 3 は jpn と eng だけを受け付けます。例: jpn+eng"
+        ),
+        "missing_noto": (
+            "Noto Sans CJK が入っていません。\n"
+            "NotoSansCJKjp-Regular.otf をインストールしてください。手順は README にあります。"
+        ),
+        "paddle_result": "PaddleOCR の結果を読めませんでした。\n{detail}",
+        "font_embed_failed": "文字層を埋め込めませんでした: {path}",
         "update_mode": "更新方法は changed、replace、keep のいずれかです。",
         "ocr_lang_empty": "OCR 言語が空です。例: jpn+eng",
         "jobs": "OCR の並列数は 1 以上です。",
@@ -164,7 +185,8 @@ CATALOG: dict[str, dict[str, str]] = {
         "help_inputs": "PDF ファイル、PDF が入ったディレクトリ、またはグロブ（{A,B}*.pdf は波括弧を展開する）",
         "help_output": "拡張子を除いた出力パス（既定: merged）。例: /hoge/context/merged",
         "help_ocr": "off: OCR しない。auto: 文字のないページだけ。force: 全ページを OCR し直す",
-        "help_ocr_lang": "Tesseract の言語（既定: jpn+eng）",
+        "help_ocr_lang": "OCR の言語（既定: jpn+eng）。レベル 2 と 3 は jpn と eng だけ",
+        "help_ocr_level": "1: Tesseract（既定）。2: PP-OCRv6 small。3: PP-OCRv6 medium",
         "help_jobs": "OCR の並列数（既定: 1）",
         "help_timeout": "外部コマンド 1 回のタイムアウト秒（既定: 600）",
         "help_max_pdf_size": (

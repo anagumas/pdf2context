@@ -26,15 +26,37 @@ Merging PDFs and extracting text requires these commands:
 brew install qpdf poppler
 ```
 
-OCR is performed by [OCRmyPDF](https://ocrmypdf.readthedocs.io/). `uv run` installs that package. Pages are rasterized with `pypdfium2`, which is installed alongside it, so Ghostscript is not required.
+Recognition level 1 uses [OCRmyPDF](https://ocrmypdf.readthedocs.io/). `uv run` installs that package. Pages are rasterized with `pypdfium2`, which is installed alongside it, so Ghostscript is not required.
 
-The Tesseract binary is required only when you use OCR. `brew install tesseract` includes the English trained data. The full language pack `tesseract-lang` is not required. To read Japanese, add only `jpn.traineddata`.
+Tesseract is required only for recognition level 1. `brew install tesseract` includes the English trained data. The full language pack `tesseract-lang` is not required. To read Japanese, add only `jpn.traineddata`.
 
 ```bash
 brew install tesseract
 curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
   -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
 ```
+
+Recognition levels 2 and 3 need [PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 or newer, and [Noto Sans CJK](https://github.com/notofonts/noto-cjk). This package does not install them. `paddleocr` must be on `PATH`. The font is not bundled. Hiragino is not used. Install the PaddlePaddle inference engine from that guide, then install PaddleOCR:
+
+```bash
+pip install "paddleocr>=3.7.0"
+```
+
+Noto Sans CJK is under the SIL Open Font License 1.1. The glyphs written into the PDF may be embedded. Install the font locally.
+
+macOS:
+
+```bash
+brew install --cask font-noto-sans-cjk
+```
+
+Debian and Ubuntu:
+
+```bash
+sudo apt install fonts-noto-cjk
+```
+
+Windows: install `NotoSansCJKjp-Regular.otf` from the [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases) for the current user.
 
 ## Usage
 
@@ -80,10 +102,28 @@ Each external command is limited to `--timeout` seconds. The default is 600.
 
 `--ocr` is `off`, `auto`, or `force`. The default is `off`. The default language is `jpn+eng`.
 
-OCRmyPDF writes the recognized characters back into the PDF as an invisible text layer. The page looks the same, while search, copy, and a later `pdftotext` can read those characters. Skew is not corrected. The output is not converted to PDF/A. If the page count changes after OCR, the run stops.
+`--ocr-level` is `1`, `2`, or `3`. The default is `1`.
+
+- `1` uses OCRmyPDF and Tesseract. `--jobs` is the OCRmyPDF worker count.
+- `2` uses PP-OCRv6 small, from PaddleOCR 3.7.0 or newer.
+- `3` uses PP-OCRv6 medium, from the same PaddleOCR.
+
+Level 1 writes the recognized characters back into the PDF as an invisible text layer. The page looks the same, while search, copy, and a later `pdftotext` can read those characters. Skew is not corrected. The output is not converted to PDF/A. If the page count changes after OCR, the run stops. `force` regenerates the page images.
+
+Levels 2 and 3 write the characters and rectangles from PaddleOCR onto the original page image. The page image is not redrawn. Skew is not corrected. The image sent to PaddleOCR is rendered at 300 dpi. Document rotation and unwarping stay off, so the rectangles remain on that image. One `paddleocr ocr` command runs for each recognized page, one page after another. `--jobs` does not change that. `--timeout` limits each of those commands. The default is 600 seconds. PaddleOCR uses a GPU when it finds one, and otherwise uses the CPU. There is no separate device option.
+
+The font embedded for levels 2 and 3 is an installed Noto Sans CJK. Only the glyphs used on the page are embedded. Hiragino is not used. If `paddleocr` or Noto Sans CJK is missing, or recognition fails, the run stops and the previous corpus stays. The run does not fall back to level 1. A page that returns no characters keeps an empty text layer.
+
+`--ocr off` ignores `--ocr-level`.
 
 - `auto` leaves any page from which at least one character can be extracted as it is, and adds a text layer only to pages with no characters. A page that is only a page number, or an image with a single heading line, is left out entirely.
-- `force` discards existing text and OCRs every page again. Use it for garbled text, or for an image whose only text is a caption. Page images are regenerated.
+- `force` discards existing text and OCRs every page again. Use it for garbled text, or for an image whose only text is a caption.
+
+Levels 2 and 3 accept only `jpn` and `eng` in `--ocr-lang`. The order does not matter. `eng+jpn` is the same as `jpn+eng`. Any other language stops the run before recognition.
+
+Changing `--ocr-level` rebuilds that source. A previous JSON with no recognition level is level 1.
+
+`--dry-run` checks that `paddleocr` and Noto Sans CJK are present for levels 2 and 3, and does not run recognition. With `--max-pdf-size`, those levels measure the PDF before the new text layer is added.
 
 ## Text extraction
 
