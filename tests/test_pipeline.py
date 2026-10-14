@@ -1057,7 +1057,7 @@ class CliTest(unittest.TestCase):
             "paddleocr>=3.7.0",
             "paddlepaddle==3.2.0",
             "Python 3.14",
-            "brew install --cask font-noto-sans-cjk",
+            "brew install qpdf poppler tesseract tesseract-lang font-noto-sans-cjk",
             "sudo apt install fonts-noto-cjk",
             "https://github.com/notofonts/noto-cjk/releases",
             "https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html",

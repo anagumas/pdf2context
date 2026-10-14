@@ -20,39 +20,17 @@ Each page heading carries both the page number in the merged file and the page n
 
 ## Requirements
 
-Merging PDFs and extracting text requires these commands:
+On macOS, Homebrew installs the formulae and the font cask in one command:
 
 ```bash
-brew install qpdf poppler
+brew install qpdf poppler tesseract tesseract-lang font-noto-sans-cjk
 ```
 
-Recognition level 1 uses [OCRmyPDF](https://ocrmypdf.readthedocs.io/). `uv run` installs that package. Pages are rasterized with `pypdfium2`, which is installed alongside it, so Ghostscript is not required.
+`qpdf` and `poppler` supply `pdftotext` and are always required. `tesseract` is required only for recognition level 1. `tesseract` itself includes English. `tesseract-lang` adds every Tesseract language, including `jpn`, which level 1 needs for Japanese. `font-noto-sans-cjk` is required only for levels 2 and 3.
 
-Tesseract is required only for recognition level 1. `brew install tesseract` includes the English trained data. The full language pack `tesseract-lang` is not required. To read Japanese, add only `jpn.traineddata`.
+`uv run` installs [OCRmyPDF](https://ocrmypdf.readthedocs.io/), `pypdfium2`, `paddleocr>=3.7.0`, and `paddlepaddle==3.2.0`. Pages are rasterized with `pypdfium2`, so Ghostscript is not required. PaddleOCR, PaddlePaddle, and the [PP-OCRv6](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) small and medium weights are Apache-2.0, the same license as this package. `uv run` puts `paddleocr` on `PATH`. Wheels for PaddlePaddle 3.2.0 exist for Python 3.11, 3.12, and 3.13. Python 3.14 has none, so those dependencies are omitted there.
 
-```bash
-brew install tesseract
-curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
-  -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
-```
-
-Recognition levels 2 and 3 need [PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 or newer, and [Noto Sans CJK](https://github.com/notofonts/noto-cjk). This package depends on `paddleocr>=3.7.0` and `paddlepaddle==3.2.0`. PaddleOCR, PaddlePaddle, and the PP-OCRv6 small and medium weights are Apache-2.0, the same license as this package. `uv sync` and `uv run` install them into the project environment, and `uv run` puts `paddleocr` on `PATH`. Wheels exist for Python 3.11, 3.12, and 3.13. Python 3.14 has none, so those dependencies are omitted there. The font is not bundled. Hiragino is not used.
-
-Noto Sans CJK is under the SIL Open Font License 1.1. The glyphs written into the PDF may be embedded. Install the font locally.
-
-macOS:
-
-```bash
-brew install --cask font-noto-sans-cjk
-```
-
-Debian and Ubuntu:
-
-```bash
-sudo apt install fonts-noto-cjk
-```
-
-Windows: install `NotoSansCJKjp-Regular.otf` from the [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases) for the current user.
+Noto Sans CJK is under the SIL Open Font License 1.1. The glyphs written into the PDF may be embedded. The face used is `NotoSansCJKjp-Regular.otf`. Hiragino is not used. On Debian and Ubuntu, `sudo apt install fonts-noto-cjk`. On Windows, install `NotoSansCJKjp-Regular.otf` from the [Noto CJK releases](https://github.com/notofonts/noto-cjk/releases) for the current user.
 
 ## Usage
 
