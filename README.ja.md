@@ -36,11 +36,7 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
   -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
 ```
 
-認識レベル 2 と 3 には、[PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 以降と、[Noto Sans CJK](https://github.com/notofonts/noto-cjk) が要ります。このパッケージはそれらを入れません。`paddleocr` が `PATH` にある必要があります。フォントは同梱しません。ヒラギノは使いません。PaddlePaddle の推論エンジンはその案内に従って入れ、そのあと PaddleOCR を入れます。
-
-```bash
-pip install "paddleocr>=3.7.0"
-```
+認識レベル 2 と 3 には、[PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 以降と、[Noto Sans CJK](https://github.com/notofonts/noto-cjk) が要ります。このパッケージは `paddleocr>=3.7.0` と `paddlepaddle==3.2.0` に依存します。PaddleOCR、PaddlePaddle、PP-OCRv6 の small と medium の重みは Apache-2.0 で、このパッケージと同じです。`uv sync` と `uv run` がプロジェクトの環境へ入れ、`uv run` は `paddleocr` を `PATH` に通します。wheel は Python 3.11、3.12、3.13 にあります。Python 3.14 には無いので、そこではこの依存を外します。フォントは同梱しません。ヒラギノは使いません。
 
 Noto Sans CJK は SIL Open Font License 1.1 です。PDF に書いた字形は埋め込んでかまいません。フォントは手元にインストールします。
 
