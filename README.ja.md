@@ -20,39 +20,17 @@ AI に渡すのは `merged.pdf` と `merged.md` です。`merged.json` はこの
 
 ## 必要なもの
 
-PDF の結合とテキスト抽出には、次のコマンドが必要です。
+macOS では、Homebrew が formula とフォントの cask を一つのコマンドで入れます。
 
 ```bash
-brew install qpdf poppler
+brew install qpdf poppler tesseract tesseract-lang font-noto-sans-cjk
 ```
 
-認識レベル 1 は [OCRmyPDF](https://ocrmypdf.readthedocs.io/) が行います。パッケージは `uv run` が入れます。ページの画像化には、同時に入る `pypdfium2` を使うので、Ghostscript は不要です。
+`qpdf` と `poppler` は `pdftotext` を含み、いつも要ります。`tesseract` が要るのは認識レベル 1 だけです。`tesseract` 本体には英語が入っています。`tesseract-lang` は `jpn` を含むすべての Tesseract 言語を足し、レベル 1 の日本語に要ります。`font-noto-sans-cjk` が要るのはレベル 2 と 3 だけです。
 
-Tesseract が要るのは認識レベル 1 だけです。`brew install tesseract` には英語の学習データが入っています。全言語パック `tesseract-lang` は不要です。日本語を読むときは `jpn.traineddata` だけ追加します。
+`uv run` は [OCRmyPDF](https://ocrmypdf.readthedocs.io/)、`pypdfium2`、`paddleocr>=3.7.0`、`paddlepaddle==3.2.0` を入れます。ページの画像化には `pypdfium2` を使うので、Ghostscript は不要です。PaddleOCR、PaddlePaddle、[PP-OCRv6](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) の small と medium の重みは Apache-2.0 で、このパッケージと同じです。`uv run` は `paddleocr` を `PATH` に通します。PaddlePaddle 3.2.0 の wheel は Python 3.11、3.12、3.13 にあります。Python 3.14 には無いので、そこではこの依存を外します。
 
-```bash
-brew install tesseract
-curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
-  -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
-```
-
-認識レベル 2 と 3 には、[PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 以降と、[Noto Sans CJK](https://github.com/notofonts/noto-cjk) が要ります。このパッケージは `paddleocr>=3.7.0` と `paddlepaddle==3.2.0` に依存します。PaddleOCR、PaddlePaddle、PP-OCRv6 の small と medium の重みは Apache-2.0 で、このパッケージと同じです。`uv sync` と `uv run` がプロジェクトの環境へ入れ、`uv run` は `paddleocr` を `PATH` に通します。wheel は Python 3.11、3.12、3.13 にあります。Python 3.14 には無いので、そこではこの依存を外します。フォントは同梱しません。ヒラギノは使いません。
-
-Noto Sans CJK は SIL Open Font License 1.1 です。PDF に書いた字形は埋め込んでかまいません。フォントは手元にインストールします。
-
-macOS:
-
-```bash
-brew install --cask font-noto-sans-cjk
-```
-
-Debian と Ubuntu:
-
-```bash
-sudo apt install fonts-noto-cjk
-```
-
-Windows: [Noto CJK のリリース](https://github.com/notofonts/noto-cjk/releases) から `NotoSansCJKjp-Regular.otf` を、現在のユーザー向けにインストールします。
+Noto Sans CJK は SIL Open Font License 1.1 です。PDF に書いた字形は埋め込んでかまいません。使う書体は `NotoSansCJKjp-Regular.otf` です。ヒラギノは使いません。Debian と Ubuntu では `sudo apt install fonts-noto-cjk` です。Windows では [Noto CJK のリリース](https://github.com/notofonts/noto-cjk/releases) から `NotoSansCJKjp-Regular.otf` を、現在のユーザー向けにインストールします。
 
 ## 使い方
 
