@@ -36,11 +36,7 @@ curl -L "https://github.com/tesseract-ocr/tessdata/raw/main/jpn.traineddata" \
   -o "$(brew --prefix)/share/tessdata/jpn.traineddata"
 ```
 
-Recognition levels 2 and 3 need [PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 or newer, and [Noto Sans CJK](https://github.com/notofonts/noto-cjk). This package does not install them. `paddleocr` must be on `PATH`. The font is not bundled. Hiragino is not used. Install the PaddlePaddle inference engine from that guide, then install PaddleOCR:
-
-```bash
-pip install "paddleocr>=3.7.0"
-```
+Recognition levels 2 and 3 need [PaddleOCR](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html) 3.7.0 or newer, and [Noto Sans CJK](https://github.com/notofonts/noto-cjk). This package depends on `paddleocr>=3.7.0` and `paddlepaddle==3.2.0`. PaddleOCR, PaddlePaddle, and the PP-OCRv6 small and medium weights are Apache-2.0, the same license as this package. `uv sync` and `uv run` install them into the project environment, and `uv run` puts `paddleocr` on `PATH`. Wheels exist for Python 3.11, 3.12, and 3.13. Python 3.14 has none, so those dependencies are omitted there. The font is not bundled. Hiragino is not used.
 
 Noto Sans CJK is under the SIL Open Font License 1.1. The glyphs written into the PDF may be embedded. Install the font locally.
 
