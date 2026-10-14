@@ -16,9 +16,11 @@ from pdf2context.pipeline import (
     PageRecord,
     Pdf2ContextError,
     SourceRecord,
+    _expand_braces,
     collect_inputs,
     convert,
     default_runner,
+    expand_argument,
     render_markdown,
     show_npages,
 )
@@ -134,6 +136,54 @@ class ConvertTest(unittest.TestCase):
             make_pdf(root / "nested" / "b.pdf", ["Nested"])
             corpus = _convert([str(root / "**" / "*.pdf")], root / "output")
             self.assertEqual([page.text for page in corpus.pages], ["Top", "Nested"])
+
+    def test_brace_glob_keeps_alternative_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "A10.pdf", ["A10"])
+            make_pdf(root / "A2.pdf", ["A2"])
+            make_pdf(root / "B1.pdf", ["B1"])
+            make_pdf(root / "C.pdf", ["C"])
+            paths = expand_argument(str(root / "{B,A}*.pdf"))
+            self.assertEqual(
+                [path.name for path in paths],
+                ["B1.pdf", "A10.pdf", "A2.pdf"],
+            )
+
+    def test_brace_glob_skips_an_empty_alternative(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "B.pdf", ["B"])
+            paths = expand_argument(str(root / "{A,B}*.pdf"))
+            self.assertEqual([path.name for path in paths], ["B.pdf"])
+
+    def test_unmatched_brace_glob_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = str(Path(temporary) / "{A,B}*.pdf")
+            with self.assertRaises(Pdf2ContextError) as raised:
+                expand_argument(missing)
+            self.assertIn("No PDFs found", str(raised.exception))
+            self.assertIn("{A,B}*.pdf", str(raised.exception))
+
+    def test_brace_literals_keep_written_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "b.pdf", ["B"])
+            make_pdf(root / "a.pdf", ["A"])
+            paths = expand_argument(str(root / "{b,a}.pdf"))
+            self.assertEqual([path.name for path in paths], ["b.pdf", "a.pdf"])
+
+    def test_expand_braces_before_glob(self) -> None:
+        self.assertEqual(_expand_braces("{A,B}*.pdf"), ["A*.pdf", "B*.pdf"])
+        self.assertEqual(
+            _expand_braces("{A,B}{1,2}.pdf"),
+            ["A1.pdf", "A2.pdf", "B1.pdf", "B2.pdf"],
+        )
+        self.assertEqual(_expand_braces("{A,{B,C}}.pdf"), ["A.pdf", "B.pdf", "C.pdf"])
+        self.assertEqual(_expand_braces("{A,B{C,D}}.pdf"), ["A.pdf", "BC.pdf", "BD.pdf"])
+        self.assertEqual(_expand_braces("{{A,B}}"), ["{A}", "{B}"])
+        self.assertEqual(_expand_braces("{ABC}"), ["{ABC}"])
+        self.assertEqual(_expand_braces("{A,B"), ["{A,B"])
 
     def test_unmatched_glob_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -482,6 +532,178 @@ class ConvertTest(unittest.TestCase):
             self.assertEqual(lines, ["added a.pdf"])
             self.assertFalse(output.exists())
 
+    def test_source_over_the_max_leaves_the_previous_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            output = root / "output"
+            _convert([str(root / "a.pdf")], output)
+            before_pdf = (output / "merged.pdf").read_bytes()
+            before_json = (output / "merged.json").read_bytes()
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert([str(root / "a.pdf")], output, max_pdf_bytes=1)
+            self.assertIn("maximum PDF size", str(raised.exception))
+            self.assertEqual((output / "merged.pdf").read_bytes(), before_pdf)
+            self.assertEqual((output / "merged.json").read_bytes(), before_json)
+
+    def test_source_over_the_max_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            output = root / "output"
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert([str(root / "a.pdf")], output, max_pdf_bytes=1, language="ja")
+            self.assertIn("上限", str(raised.exception))
+            self.assertFalse((output / "merged.pdf").exists())
+
+    def test_sources_after_the_limit_are_left_out(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            make_pdf(root / "b.pdf", [f"P{index}" for index in range(12)])
+            make_pdf(root / "c.pdf", ["Gamma"])
+            fitted = root / "fitted"
+            _convert([str(root / "a.pdf")], fitted)
+            limit = (fitted / "merged.pdf").stat().st_size
+            output = root / "output"
+            warnings: list[str] = []
+            corpus = _convert(
+                [str(root / "a.pdf"), str(root / "b.pdf"), str(root / "c.pdf")],
+                output,
+                max_pdf_bytes=limit,
+                warn=warnings.append,
+            )
+            self.assertEqual(
+                [source.source_file for source in corpus.sources],
+                ["a.pdf"],
+            )
+            self.assertEqual(_page_count(output / "merged.pdf"), 1)
+            self.assertIn("Alpha", _pdftotext(output / "merged.pdf"))
+            markdown = (output / "merged.md").read_text(encoding="utf-8")
+            self.assertIn("Alpha", markdown)
+            self.assertNotIn("b.pdf", markdown)
+            self.assertNotIn("Gamma", markdown)
+            manifest = json.loads((output / "merged.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [source["source_file"] for source in manifest["sources"]],
+                ["a.pdf"],
+            )
+            self.assertNotIn("in_pdf", manifest["sources"][0])
+            self.assertEqual(manifest["options"]["max_pdf_bytes"], limit)
+            self.assertTrue(any("b.pdf" in message for message in warnings))
+            self.assertTrue(any("c.pdf" in message for message in warnings))
+
+    def test_dropping_the_cap_adds_the_omitted_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            make_pdf(root / "b.pdf", [f"P{index}" for index in range(12)])
+            fitted = root / "fitted"
+            _convert([str(root / "a.pdf")], fitted)
+            limit = (fitted / "merged.pdf").stat().st_size
+            output = root / "output"
+            _convert(
+                [str(root / "a.pdf"), str(root / "b.pdf")],
+                output,
+                max_pdf_bytes=limit,
+            )
+            self.assertEqual(_page_count(output / "merged.pdf"), 1)
+            corpus = _convert([str(root / "a.pdf"), str(root / "b.pdf")], output)
+            self.assertEqual(
+                [source.source_file for source in corpus.sources],
+                ["a.pdf", "b.pdf"],
+            )
+            manifest = json.loads((output / "merged.json").read_text(encoding="utf-8"))
+            self.assertIsNone(manifest["options"]["max_pdf_bytes"])
+            self.assertIn("P0", _pdftotext(output / "merged.pdf"))
+
+    def test_same_cap_leaves_the_corpus_and_warns_again(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            make_pdf(root / "b.pdf", [f"P{index}" for index in range(12)])
+            fitted = root / "fitted"
+            _convert([str(root / "a.pdf")], fitted)
+            limit = (fitted / "merged.pdf").stat().st_size
+            output = root / "output"
+            _convert(
+                [str(root / "a.pdf"), str(root / "b.pdf")],
+                output,
+                max_pdf_bytes=limit,
+            )
+            before = (output / "merged.json").read_bytes()
+            warnings: list[str] = []
+            _convert(
+                [str(root / "a.pdf"), str(root / "b.pdf")],
+                output,
+                max_pdf_bytes=limit,
+                warn=warnings.append,
+            )
+            self.assertEqual((output / "merged.json").read_bytes(), before)
+            self.assertTrue(any("b.pdf" in message for message in warnings))
+
+    def test_a_new_source_stays_out_when_earlier_sources_fill_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            make_pdf(root / "b.pdf", ["Beta"])
+            make_pdf(root / "c.pdf", [f"P{index}" for index in range(12)])
+            fitted = root / "fitted"
+            _convert([str(root / "a.pdf"), str(root / "b.pdf")], fitted)
+            limit = (fitted / "merged.pdf").stat().st_size
+            output = root / "output"
+            _convert([str(root / "a.pdf"), str(root / "b.pdf")], output)
+            warnings: list[str] = []
+            corpus = _convert(
+                [str(root / "a.pdf"), str(root / "b.pdf"), str(root / "c.pdf")],
+                output,
+                max_pdf_bytes=limit,
+                warn=warnings.append,
+            )
+            names = [source.source_file for source in corpus.sources]
+            self.assertIn("a.pdf", names)
+            self.assertNotIn("c.pdf", names)
+            self.assertTrue(any("c.pdf" in message for message in warnings))
+
+    def test_dry_run_reports_capped_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            make_pdf(root / "b.pdf", [f"P{index}" for index in range(12)])
+            make_pdf(root / "c.pdf", ["Gamma"])
+            fitted = root / "fitted"
+            _convert([str(root / "a.pdf")], fitted)
+            limit = (fitted / "merged.pdf").stat().st_size
+            output = root / "output"
+            lines: list[str] = []
+            _convert(
+                [str(root / "a.pdf"), str(root / "b.pdf"), str(root / "c.pdf")],
+                output,
+                max_pdf_bytes=limit,
+                dry_run=True,
+                report=lines.append,
+            )
+            self.assertEqual(lines, ["added a.pdf", "capped b.pdf", "capped c.pdf"])
+            self.assertFalse(output.exists())
+
+    def test_dry_run_over_the_max_reports_then_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            output = root / "output"
+            lines: list[str] = []
+            with self.assertRaises(Pdf2ContextError) as raised:
+                _convert(
+                    [str(root / "a.pdf")],
+                    output,
+                    max_pdf_bytes=1,
+                    dry_run=True,
+                    report=lines.append,
+                )
+            self.assertEqual(lines, ["capped a.pdf"])
+            self.assertIn("maximum PDF size", str(raised.exception))
+            self.assertFalse(output.exists())
+
 
 class LanguageTest(unittest.TestCase):
     def test_notice_stays_english_when_lang_is_ja(self) -> None:
@@ -735,6 +957,96 @@ class CliTest(unittest.TestCase):
             )
             self.assertEqual(japanese.returncode, 0, japanese.stderr)
             self.assertIn("拡張子を除いた出力パス", japanese.stdout)
+
+    def test_max_pdf_size_accepts_a_unit_and_rejects_garbage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Hello"])
+            output = root / "out"
+            command = [
+                sys.executable,
+                "-m",
+                "pdf2context",
+                str(root / "a.pdf"),
+                "-o",
+                str(output / "merged"),
+            ]
+            accepted = subprocess.run(
+                [*command, "--max-pdf-size", "32MB"],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(_page_count(output / "merged.pdf"), 1)
+            manifest = json.loads((output / "merged.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["options"]["max_pdf_bytes"], 32_000_000)
+            rejected = subprocess.run(
+                [*command, "--max-pdf-size", "nope"],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn("32MB", rejected.stderr)
+            japanese = subprocess.run(
+                [*command, "--lang", "ja", "--max-pdf-size", "0"],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(japanese.returncode, 2)
+            self.assertIn("サイズ", japanese.stderr)
+
+    def test_quiet_still_warns_when_a_source_is_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_pdf(root / "a.pdf", ["Alpha"])
+            make_pdf(root / "b.pdf", [f"P{index}" for index in range(12)])
+            fitted = root / "fitted"
+            measured = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pdf2context",
+                    str(root / "a.pdf"),
+                    "-o",
+                    str(fitted / "merged"),
+                ],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(measured.returncode, 0, measured.stderr)
+            limit = (fitted / "merged.pdf").stat().st_size
+            output = root / "out"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pdf2context",
+                    "--quiet",
+                    "--max-pdf-size",
+                    str(limit),
+                    str(root / "a.pdf"),
+                    str(root / "b.pdf"),
+                    "-o",
+                    str(output / "merged"),
+                ],
+                cwd=ROOT,
+                env={**_env(), "PYTHONPATH": str(SRC)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("b.pdf", completed.stderr)
+            self.assertNotIn("Done:", completed.stderr)
+            markdown = (output / "merged.md").read_text(encoding="utf-8")
+            self.assertNotIn("b.pdf", markdown)
 
 
 def _convert(inputs, output, **kwargs):

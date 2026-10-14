@@ -66,10 +66,13 @@ CATALOG: dict[str, dict[str, str]] = {
         "interrupted": "Interrupted.",
         "expected_positive_int": "Expected a positive integer.",
         "expected_positive_number": "Expected a positive number.",
+        "expected_pdf_size": "Expected a size such as 32MB, 20MiB, or a positive number of bytes.",
+        "capped": "Capped because the merged PDF would exceed the maximum size: {name}",
+        "nothing_within_cap": "No source fits within the maximum PDF size.",
         "description": (
             "Merge PDFs into a .pdf, .md, and .json corpus with page-level source citations."
         ),
-        "help_inputs": "PDF files, a directory of PDFs, or a glob",
+        "help_inputs": "PDF files, a directory of PDFs, or a glob ({A,B}*.pdf expands braces)",
         "help_output": (
             "Output path without an extension (default: merged). Example: /hoge/context/merged"
         ),
@@ -77,6 +80,10 @@ CATALOG: dict[str, dict[str, str]] = {
         "help_ocr_lang": "Tesseract languages (default: jpn+eng)",
         "help_jobs": "OCR worker count (default: 1)",
         "help_timeout": "Timeout in seconds for each external command (default: 600)",
+        "help_max_pdf_size": (
+            "Maximum merged PDF size, such as 32MB or 20MiB. "
+            "The first source that would exceed it, and every source after it, is left out"
+        ),
         "help_no_layout": "Omit pdftotext -layout",
         "help_update": (
             "changed: rebuild sources whose bytes changed (default). "
@@ -150,13 +157,20 @@ CATALOG: dict[str, dict[str, str]] = {
         "interrupted": "中断しました。",
         "expected_positive_int": "正の整数を指定してください。",
         "expected_positive_number": "正の数を指定してください。",
+        "expected_pdf_size": "サイズを指定してください。例: 32MB、20MiB、または正のバイト数。",
+        "capped": "上限を超えるので見送りました: {name}",
+        "nothing_within_cap": "上限に収まる出典がありません。",
         "description": "複数の PDF を結合し、ページ単位の出典を持つ .pdf / .md / .json を作ります。",
-        "help_inputs": "PDF ファイル、PDF が入ったディレクトリ、またはグロブ",
+        "help_inputs": "PDF ファイル、PDF が入ったディレクトリ、またはグロブ（{A,B}*.pdf は波括弧を展開する）",
         "help_output": "拡張子を除いた出力パス（既定: merged）。例: /hoge/context/merged",
         "help_ocr": "off: OCR しない。auto: 文字のないページだけ。force: 全ページを OCR し直す",
         "help_ocr_lang": "Tesseract の言語（既定: jpn+eng）",
         "help_jobs": "OCR の並列数（既定: 1）",
         "help_timeout": "外部コマンド 1 回のタイムアウト秒（既定: 600）",
+        "help_max_pdf_size": (
+            "結合した PDF の最大サイズ。例: 32MB、20MiB。"
+            "上限を超える出典と、その後ろは入れない"
+        ),
         "help_no_layout": "pdftotext の -layout を外す",
         "help_update": (
             "changed: 内容が変わった出典だけ作り直す（既定）。"

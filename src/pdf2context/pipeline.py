@@ -24,6 +24,7 @@ REUSED = "reused"
 KEPT = "kept"
 RETAINED = "retained"
 PRUNED = "pruned"
+CAPPED = "capped"
 NOTICE = (
     "## Notice\n"
     "\n"
@@ -49,7 +50,7 @@ class CommandResult:
 class PageRecord:
     source_file: str
     source_page: int
-    merged_page: int
+    merged_page: Optional[int]
     text: str
 
     @property
@@ -61,8 +62,8 @@ class PageRecord:
 class SourceRecord:
     source_file: str
     pages: int
-    merged_start: int
-    merged_end: int
+    merged_start: Optional[int]
+    merged_end: Optional[int]
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,7 @@ def convert(
     prune: bool = False,
     dry_run: bool = False,
     language: str | None = None,
+    max_pdf_bytes: Optional[int] = None,
     runner: Runner = default_runner,
     which: Which = shutil.which,
     log: Log = _log_stderr,
@@ -227,6 +229,8 @@ def convert(
     set. `--dry-run` prints the plan and same-content groups without writing.
     Publication replaces regular files and rolls back if a later output fails.
     `--lang` selects errors, help, and progress logs. The Markdown notice stays English.
+    `max_pdf_bytes` caps the merged PDF. Sources are added whole, in order. The first
+    source that would exceed the cap, and every source after it, is left out of the corpus.
     """
     explicit = language
     token = LANGUAGE.set(explicit or "en")
@@ -243,6 +247,7 @@ def convert(
             prune=prune,
             dry_run=dry_run,
             explicit=explicit,
+            max_pdf_bytes=max_pdf_bytes,
             runner=runner,
             which=which,
             log=log,
@@ -266,6 +271,7 @@ def _convert(
     prune: bool,
     dry_run: bool,
     explicit: str | None,
+    max_pdf_bytes: Optional[int],
     runner: Runner,
     which: Which,
     log: Log,
@@ -282,6 +288,10 @@ def _convert(
         raise Pdf2ContextError(say("jobs"))
     if timeout <= 0:
         raise Pdf2ContextError(say("timeout_positive"))
+    if max_pdf_bytes is not None and (
+        isinstance(max_pdf_bytes, bool) or not isinstance(max_pdf_bytes, int) or max_pdf_bytes <= 0
+    ):
+        raise Pdf2ContextError(say("expected_pdf_size"))
     if warn is None:
         warn = log
 
@@ -317,13 +327,30 @@ def _convert(
         previous_options=previous_options,
     )
     if dry_run:
-        for line in report_lines(
+        shown = _plan_within_cap(
             plan,
+            tools,
+            max_pdf_bytes=max_pdf_bytes,
+            previous_pdf=layout_paths.pdf if previous is not None else None,
+            ocr=ocr,
+            ocr_lang=ocr_lang,
+            jobs=jobs,
+            timeout=timeout,
+            layout=layout,
+            layout_matches=_layout_matches(previous_options, layout),
+            runner=runner,
+            log=log,
+            warn=warn,
+        )
+        for line in report_lines(
+            shown,
             sources,
             previous_sources,
             language_change_line(explicit, stored),
         ):
             report(line)
+        if _none_fit(shown):
+            raise Pdf2ContextError(say("nothing_within_cap"))
         if previous is None:
             return Corpus(sources=[], pages=[])
         return corpus_from_manifest(previous)
@@ -350,6 +377,7 @@ def _convert(
         previous=previous,
         language=effective,
         language_changed=language_change_line(explicit, stored) is not None,
+        max_pdf_bytes=max_pdf_bytes,
         runner=runner,
         log=log,
         warn=warn,
@@ -395,15 +423,27 @@ def collect_inputs(
 
 def expand_argument(argument: str) -> list[Path]:
     argument = os.path.expanduser(argument)
+    patterns = _expand_braces(argument)
+    if len(patterns) == 1:
+        return _expand_single(patterns[0])
+
+    found: list[Path] = []
+    for pattern in patterns:
+        if glob.has_magic(pattern):
+            found.extend(_glob_pdfs(pattern))
+            continue
+        found.extend(_expand_single(pattern))
+    if not found:
+        raise Pdf2ContextError(say("no_pdfs_found", argument=argument))
+    return _unique_paths(found)
+
+
+def _expand_single(argument: str) -> list[Path]:
     if glob.has_magic(argument):
-        matches = [
-            Path(match)
-            for match in glob.glob(argument, recursive=True)
-            if Path(match).is_file() and Path(match).suffix.lower() == ".pdf"
-        ]
+        matches = _glob_pdfs(argument)
         if not matches:
             raise Pdf2ContextError(say("no_pdfs_found", argument=argument))
-        return sorted(matches, key=lambda path: path.as_posix())
+        return matches
     path = Path(argument)
     if path.is_dir():
         matches = [
@@ -419,6 +459,80 @@ def expand_argument(argument: str) -> list[Path]:
     if path.is_file():
         return [path]
     raise Pdf2ContextError(say("input_not_found", argument=argument))
+
+
+def _glob_pdfs(pattern: str) -> list[Path]:
+    matches = [
+        Path(match)
+        for match in glob.glob(pattern, recursive=True)
+        if Path(match).is_file() and Path(match).suffix.lower() == ".pdf"
+    ]
+    return sorted(matches, key=lambda path: path.as_posix())
+
+
+def _unique_paths(paths: Sequence[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = path.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _expand_braces(text: str) -> list[str]:
+    """Expand shell-style {a,b} groups. A group without a comma stays literal."""
+    start: Optional[int] = None
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+            continue
+        if char != "}" or depth == 0:
+            continue
+        depth -= 1
+        if depth != 0 or start is None:
+            continue
+        body = text[start + 1 : index]
+        options = _split_brace_options(body)
+        prefix = text[:start]
+        suffix = text[index + 1 :]
+        if len(options) > 1:
+            results: list[str] = []
+            for option in options:
+                for expanded_option in _expand_braces(option):
+                    for expanded_suffix in _expand_braces(suffix):
+                        results.append(prefix + expanded_option + expanded_suffix)
+            return results
+        expanded_body = _expand_braces(body)
+        if expanded_body != [body]:
+            return [
+                prefix + "{" + item + "}" + expanded_suffix
+                for item in expanded_body
+                for expanded_suffix in _expand_braces(suffix)
+            ]
+        start = None
+    return [text]
+
+
+def _split_brace_options(body: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(body):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            parts.append(body[start:index])
+            start = index + 1
+    parts.append(body[start:])
+    return parts
 
 
 def collapse_sources(paths: Sequence[Path], log: Log) -> list[InputSource]:
@@ -560,12 +674,78 @@ def publication_skippable(
     update: str,
     layout: bool,
     previous_options: Optional[dict],
+    max_pdf_bytes: Optional[int] = None,
 ) -> bool:
     if update == "replace" or previous_options is None:
         return False
     if any(item.status in {REPLACED, ADDED, PRUNED} for item in plan):
         return False
+    if not _cap_matches(previous_options, max_pdf_bytes):
+        return False
     return _layout_matches(previous_options, layout)
+
+
+def _cap_matches(previous_options: Optional[dict], max_pdf_bytes: Optional[int]) -> bool:
+    if not previous_options or "max_pdf_bytes" not in previous_options:
+        stored = None
+    else:
+        stored = previous_options.get("max_pdf_bytes")
+    return stored == max_pdf_bytes
+
+
+def _none_fit(plan: Sequence[PlanItem]) -> bool:
+    kept = [item for item in plan if item.status != PRUNED]
+    return bool(kept) and all(item.status == CAPPED for item in kept)
+
+
+def _label_capped(plan: Sequence[PlanItem], capped: Sequence[str]) -> list[PlanItem]:
+    names = set(capped)
+    return [
+        PlanItem(item.name, CAPPED, item.path, item.digest, item.previous)
+        if item.name in names
+        else item
+        for item in plan
+    ]
+
+
+def _plan_within_cap(
+    plan: Sequence[PlanItem],
+    tools: dict[str, str],
+    *,
+    max_pdf_bytes: Optional[int],
+    previous_pdf: Optional[Path],
+    ocr: str,
+    ocr_lang: str,
+    jobs: int,
+    timeout: float,
+    layout: bool,
+    layout_matches: bool,
+    runner: Runner,
+    log: Log,
+    warn: Log,
+) -> list[PlanItem]:
+    """Label the tail that would push the merged PDF over the cap."""
+    if max_pdf_bytes is None:
+        return list(plan)
+    with tempfile.TemporaryDirectory(prefix=".pdf2context-") as temporary:
+        _corpus, _details, capped = assemble_corpus(
+            plan,
+            Path(temporary),
+            tools,
+            previous_pdf=previous_pdf,
+            pdf_name="preview.pdf",
+            ocr=ocr,
+            ocr_lang=ocr_lang,
+            jobs=jobs,
+            timeout=timeout,
+            layout=layout,
+            layout_matches=layout_matches,
+            max_pdf_bytes=max_pdf_bytes,
+            runner=runner,
+            log=log,
+            warn=warn,
+        )
+    return _label_capped(plan, capped)
 
 
 def outputs_present(layout_paths: OutputLayout) -> bool:
@@ -668,6 +848,7 @@ def _publish_plan(
     previous: Optional[dict],
     language: str,
     language_changed: bool,
+    max_pdf_bytes: Optional[int],
     runner: Runner,
     log: Log,
     warn: Log,
@@ -685,7 +866,13 @@ def _publish_plan(
             stream.write(f"pid={os.getpid()}\n")
         if (
             previous is not None
-            and publication_skippable(plan, update, layout, previous.get("options"))
+            and publication_skippable(
+                plan,
+                update,
+                layout,
+                previous.get("options"),
+                max_pdf_bytes,
+            )
             and outputs_present(layout_paths)
         ):
             if language_changed:
@@ -699,7 +886,7 @@ def _publish_plan(
             dir=layout_paths.directory,
         ) as temporary:
             workspace = Path(temporary)
-            corpus, details = assemble_corpus(
+            corpus, details, capped = assemble_corpus(
                 plan,
                 workspace,
                 tools,
@@ -711,11 +898,21 @@ def _publish_plan(
                 timeout=timeout,
                 layout=layout,
                 layout_matches=layout_matches,
+                max_pdf_bytes=max_pdf_bytes,
                 runner=runner,
                 log=log,
                 warn=warn,
             )
-            if previous is not None and update != "replace" and _texts_match(previous, corpus):
+            if not corpus.sources:
+                if capped:
+                    raise Pdf2ContextError(say("nothing_within_cap"))
+                raise Pdf2ContextError(say("no_input_pdfs"))
+            if (
+                previous is not None
+                and update != "replace"
+                and _texts_match(previous, corpus)
+                and _cap_matches(previous.get("options"), max_pdf_bytes)
+            ):
                 if language_changed:
                     patch_language(layout_paths.json, language)
                     return None, True
@@ -741,6 +938,7 @@ def _publish_plan(
                         "layout": layout,
                         "jobs": jobs,
                         "language": language,
+                        "max_pdf_bytes": max_pdf_bytes,
                     },
                     output_hashes=hashes,
                 ),
@@ -820,14 +1018,16 @@ def assemble_corpus(
     timeout: float,
     layout: bool,
     layout_matches: bool,
+    max_pdf_bytes: Optional[int],
     runner: Runner,
     log: Log,
     warn: Log,
-) -> tuple[Corpus, list[dict]]:
+) -> tuple[Corpus, list[dict], list[str]]:
     active = [item for item in plan if item.status != PRUNED]
     pages: list[PageRecord] = []
     sources: list[SourceRecord] = []
     details: list[dict] = []
+    capped_names: list[str] = []
     merged_page = 1
     accumulator: Optional[Path] = None
     for index, item in enumerate(active, start=1):
@@ -847,6 +1047,26 @@ def assemble_corpus(
             runner=runner,
             warn=warn,
         )
+        nxt = workspace / f"combined-{index % 2}.pdf"
+        merged = merge_one(
+            tools["qpdf"],
+            accumulator,
+            prepared,
+            nxt,
+            timeout,
+            runner,
+            warn,
+        )
+        if max_pdf_bytes is not None and merged.stat().st_size > max_pdf_bytes:
+            merged.unlink()
+            prepared.unlink()
+            capped_names = [later.name for later in active[index - 1 :]]
+            for name in capped_names:
+                warn(say("capped", name=name))
+            break
+        if accumulator is not None and accumulator != merged:
+            accumulator.unlink()
+        accumulator = merged
         count = len(texts)
         start = merged_page
         for source_page, text in enumerate(texts, start=1):
@@ -879,19 +1099,9 @@ def assemble_corpus(
                 "merged_end": merged_page - 1,
             }
         )
-        nxt = workspace / f"combined-{index % 2}.pdf"
-        accumulator = merge_one(
-            tools["qpdf"],
-            accumulator,
-            prepared,
-            nxt,
-            timeout,
-            runner,
-            warn,
-        )
         prepared.unlink()
     if accumulator is None:
-        raise Pdf2ContextError(say("no_input_pdfs"))
+        return Corpus(sources=[], pages=[]), [], capped_names
     merged_count = show_npages(accumulator, tools["qpdf"], timeout, runner, warn)
     if merged_count != len(pages):
         raise Pdf2ContextError(say("merged_count_mismatch"))
@@ -902,7 +1112,7 @@ def assemble_corpus(
         warn=warn,
     )
     os.replace(accumulator, workspace / pdf_name)
-    return Corpus(sources=sources, pages=pages), details
+    return Corpus(sources=sources, pages=pages), details, capped_names
 
 
 def _materialize_source(
@@ -1072,14 +1282,12 @@ def merge_one(
     runner: Runner,
     warn: Log,
 ) -> Path:
-    """Append one PDF. Each input is followed by its own 1-z range."""
+    """Append one PDF. The previous accumulator is left in place."""
     command = [qpdf, "--empty", "--pages"]
     if accumulator is not None:
         command.extend([str(accumulator), "1-z"])
     command.extend([str(prepared), "1-z", "--", str(destination)])
     execute(command, timeout=timeout, runner=runner, warn=warn)
-    if accumulator is not None and accumulator != destination:
-        accumulator.unlink()
     return destination
 
 
